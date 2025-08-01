@@ -157,7 +157,7 @@ def BoW_main():
         loaded_tree = pickle.load(f)
     
     sc_grph = scene_graph(img_id,descprs,loaded_tree)
-    return RANSAC_refinement_Graph(sc_grph,path,orb)
+    return img_id,descprs,RANSAC_refinement_Graph(sc_grph,path,orb)
 
-if __name__ == '__main__':
-    scenec_graph =BoW_main()
+# if __name__ == '__main__':
+#     scenec_graph =BoW_main()
