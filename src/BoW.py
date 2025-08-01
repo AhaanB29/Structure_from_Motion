@@ -137,7 +137,7 @@ def RANSAC_refinement_Graph(graph,path,orb):
     
     return verified_graph
 ###############################################################
-if __name__ == '__main__':
+def BoW_main():
     path = "/media/ahaanbanerjee/Crucial X9/SfM/Data/train/church/images/"
     orb = cv2.ORB_create(nfeatures=2000)
     img_id , descprs = feature_extractor(path,orb)
@@ -157,6 +157,7 @@ if __name__ == '__main__':
         loaded_tree = pickle.load(f)
     
     sc_grph = scene_graph(img_id,descprs,loaded_tree)
-    print(sc_grph)
-    print('##############')
-    print(RANSAC_refinement_Graph(sc_grph,path,orb))
+    return RANSAC_refinement_Graph(sc_grph,path,orb)
+
+if __name__ == '__main__':
+    scenec_graph =BoW_main()
