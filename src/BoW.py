@@ -108,7 +108,7 @@ def RANSAC(query_img,candidate_img,path,orb):
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
     matches = bf.match(descriptors_q, descriptors_c)
     # Apply ratio test
-    good = sorted(matches,key=lambda x:x.distance) [:20]
+    good = sorted(matches,key=lambda x:x.distance)
     pts_c = np.float32([kp_c[m.trainIdx].pt for m in good]).reshape(-1,1,2)
     pts_q= np.float32([kp_q[m.queryIdx].pt for m in good]).reshape(-1,1,2)
     
@@ -122,8 +122,9 @@ def RANSAC(query_img,candidate_img,path,orb):
 
     inlier_matches = [good[i] for i in range(len(good)) if mask[i][0]]
     num_inliers = np.sum(mask)
-
-    return inlier_matches, num_inliers, kp_q, kp_c
+    pts_c = np.float32([kp_c[m.trainIdx].pt for m in good]).T.reshape(2, -1)
+    pts_q = np.float32([kp_q[m.queryIdx].pt for m in good]).T.reshape(2, -1)
+    return inlier_matches, num_inliers, pts_c, pts_q
 
 
 
@@ -149,7 +150,7 @@ def BoW_main():
     # for img_name, descs in zip(img_id, descprs):
     #     bow.inv_index(img_name, descs)
 
-    # with open('hkm_tree.pkl', 'wb') as f:
+    # with open('hkm_tree.pkl_SIFT', 'wb') as f:
     #     pickle.dump(bow, f)
 
 # --- Later, to load it back ---
@@ -157,7 +158,7 @@ def BoW_main():
         loaded_tree = pickle.load(f)
     
     sc_grph = scene_graph(img_id,descprs,loaded_tree)
-    return img_id,descprs,RANSAC_refinement_Graph(sc_grph,path,orb)
+    return img_id,descprs,RANSAC_refinement_Graph(sc_grph,path,orb),orb
 
-# if __name__ == '__main__':
-#     scenec_graph =BoW_main()
+if __name__ == '__main__':
+    scenec_graph =BoW_main()
