@@ -39,14 +39,16 @@ def projection_2D_3D(scene_graph,all_R,all_k,all_t,img_id,path,orb):
                 if (img_id[q],c) not in visited_edges and (c,img_id[q]) not in visited_edges:
                     visited_edges.add((img_id[q],c))
                     _,num_inliers,pts_c,pts_q = RANSAC(img_id[q],c,path,orb)
-                    if num_inliers < 2:
+                    if num_inliers < 8 or pts_q.shape[1] < 8:
                         continue
                     c_idx = img_id.index(c,0,len(img_id))
-                    P_q = projection_mat(all_k[q],all_R[q],all_t[q])
-                    P_c=  projection_mat(all_k[c_idx],all_R[c_idx],all_t[c_idx])
+                    P_q = projection_mat(all_k,all_R[q],all_t[q])
+                    P_c=  projection_mat(all_k,all_R[c_idx],all_t[c_idx])
                     points_4D = cv2.triangulatePoints(P_q,P_c,pts_q,pts_c) # (X,Y,Z,W)
-                    point_3D = (points_4D[:3, :] / points_4D[3, :]).T
+                    valid_mask = np.abs(points_4D[3, :]) > 1e-4
+                    point_3D = (points_4D[:3, valid_mask] / points_4D[3, valid_mask]).T
                     all_points_3D.append(point_3D)
+    print(visited_edges)
     return all_points_3D
 
 ###########################################################################
@@ -55,20 +57,18 @@ if __name__ == '__main__':
     img_path = "/media/ahaanbanerjee/Crucial X9/SfM/Data/train/church/images/"
     img_id, descprs, scene_graph,orb = BoW_main()
     all_R, all_t, all_k = Camera_Params(csv_path,img_id)
-    
+    K_mean = np.mean(all_k, axis=0)
+    print(K_mean)
     # print(scene_graph)
-    points_3D = projection_2D_3D(scene_graph,all_R,all_k,all_t,img_id,img_path,orb)
-    all_pts = np.vstack(points_3D)
+    points_3D = projection_2D_3D(scene_graph,all_R,K_mean,all_t,img_id,img_path,orb)
+    
+    all_pts = np.vstack(points_3D,dtype=np.float32)
+    mask = np.all(np.abs(all_pts) < 5000, axis=1)
+    all_pts = all_pts[mask]
     print(all_pts.shape)
-# then visualize all_pts
-    
     #############################
-    fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(111, projection='3d')
-    ax.scatter(all_pts[:,0], all_pts[:,1], all_pts[:,2], s=1, c='b')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    plt.title('3D Point Cloud Projection')
-    plt.show()
     
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(all_pts)
+    o3d.visualization.draw_geometries([pcd])
+        

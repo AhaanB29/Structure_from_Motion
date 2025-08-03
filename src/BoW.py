@@ -85,7 +85,7 @@ def feature_extractor(dir_path,orb):
         kp,descriptors = orb.detectAndCompute(img,None)
         all_descriptors.append(descriptors)
         img_id.append(img_name)
-    return img_id,np.array(all_descriptors)
+    return img_id,np.vstack(all_descriptors,dtype=np.float32)
 
 
 def scene_graph(img_id,descriptors,tree):
@@ -122,8 +122,8 @@ def RANSAC(query_img,candidate_img,path,orb):
 
     inlier_matches = [good[i] for i in range(len(good)) if mask[i][0]]
     num_inliers = np.sum(mask)
-    pts_c = np.float32([kp_c[m.trainIdx].pt for m in good]).T.reshape(2, -1)
-    pts_q = np.float32([kp_q[m.queryIdx].pt for m in good]).T.reshape(2, -1)
+    pts_c = np.float32([kp_c[m.trainIdx].pt for m in inlier_matches]).T.reshape(2, -1)
+    pts_q = np.float32([kp_q[m.queryIdx].pt for m in inlier_matches]).T.reshape(2, -1)
     return inlier_matches, num_inliers, pts_c, pts_q
 
 
@@ -140,25 +140,25 @@ def RANSAC_refinement_Graph(graph,path,orb):
 ###############################################################
 def BoW_main():
     path = "/media/ahaanbanerjee/Crucial X9/SfM/Data/train/church/images/"
-    orb = cv2.ORB_create(nfeatures=2000)
+    orb = cv2.ORB_create(nfeatures=5000)
     img_id , descprs = feature_extractor(path,orb)
     flattned_desc = descprs.reshape(-1,32)
     bow = BoW(branching_factor=15,max_depth=8)
-    # bow.fit(flattned_desc)
-    # print(bow.leaf_count)
-    # #print(bow.tree.centroid)
-    # for img_name, descs in zip(img_id, descprs):
-    #     bow.inv_index(img_name, descs)
+    bow.fit(flattned_desc)
+    print(bow.leaf_count)
+    #print(bow.tree.centroid)
+    for img_name, descs in zip(img_id, descprs):
+        bow.inv_index(img_name, descs)
 
-    # with open('hkm_tree.pkl_SIFT', 'wb') as f:
-    #     pickle.dump(bow, f)
+    with open('hkm_tree_5000.pkl', 'wb') as f:
+        pickle.dump(bow, f)
 
 # --- Later, to load it back ---
-    with open('hkm_tree.pkl', 'rb') as f:
+    with open('hkm_tree_5000.pkl', 'rb') as f:
         loaded_tree = pickle.load(f)
     
     sc_grph = scene_graph(img_id,descprs,loaded_tree)
     return img_id,descprs,RANSAC_refinement_Graph(sc_grph,path,orb),orb
 
-if __name__ == '__main__':
-    scenec_graph =BoW_main()
+# if __name__ == '__main__':
+#     BoW_main()
