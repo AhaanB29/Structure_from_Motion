@@ -139,26 +139,26 @@ def RANSAC_refinement_Graph(graph,path,orb):
     return verified_graph
 ###############################################################
 def BoW_main():
-    path = "/media/ahaanbanerjee/Crucial X9/SfM/Data/train/church/images/"
+    path = "/media/ahaanbanerjee/Crucial X9/SfM/Data/train/multi-temporal-temple-baalshamin/images/"
     orb = cv2.ORB_create(nfeatures=5000)
     img_id , descprs = feature_extractor(path,orb)
-    flattned_desc = descprs.reshape(-1,32)
-    bow = BoW(branching_factor=15,max_depth=8)
-    bow.fit(flattned_desc)
-    print(bow.leaf_count)
-    #print(bow.tree.centroid)
-    for img_name, descs in zip(img_id, descprs):
-        bow.inv_index(img_name, descs)
+    # flattned_desc = descprs.reshape(-1,32)
+    # bow = BoW(branching_factor=15,max_depth=8)
+    # bow.fit(flattned_desc)
+    # print(bow.leaf_count)
+    # #print(bow.tree.centroid)
+    # for img_name, descs in zip(img_id, descprs):
+    #     bow.inv_index(img_name, descs)
 
-    with open('hkm_tree_5000.pkl', 'wb') as f:
-        pickle.dump(bow, f)
+    # with open('hkm_bal_5000.pkl', 'wb') as f:
+    #     pickle.dump(bow, f)
 
 # --- Later, to load it back ---
-    with open('hkm_tree_5000.pkl', 'rb') as f:
+    with open('hkm_bal_5000.pkl', 'rb') as f:
         loaded_tree = pickle.load(f)
     
-    sc_grph = scene_graph(img_id,descprs,loaded_tree)
-    return img_id,descprs,RANSAC_refinement_Graph(sc_grph,path,orb),orb
+    #sc_grph = scene_graph(img_id,descprs,loaded_tree)
+    return img_id,descprs,orb#RANSAC_refinement_Graph(sc_grph,path,orb),orb
 
 # if __name__ == '__main__':
 #     BoW_main()
