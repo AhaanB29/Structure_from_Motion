@@ -81,11 +81,11 @@ def feature_extractor(dir_path,orb):
     # Use Feature Extractor to Key key points and descriptors
     img_id=[]
     for img_name in os.listdir(dir_path):
-        img = cv2.imread(dir_path+'/'+img_name,cv2.IMREAD_GRAYSCALE)
+        img = cv2.imread(dir_path+img_name,cv2.IMREAD_GRAYSCALE)
         kp,descriptors = orb.detectAndCompute(img,None)
         all_descriptors.append(descriptors)
         img_id.append(img_name)
-    return img_id,np.vstack(all_descriptors,dtype=np.float32)
+    return img_id,np.array(all_descriptors)
 
 
 def scene_graph(img_id,descriptors,tree):
@@ -95,7 +95,7 @@ def scene_graph(img_id,descriptors,tree):
         for other,freq in votes:
             if id!=other:
                 score = freq/len(desc)
-                if(score >= 0.095):
+                if(score >= 0.0950):
                     graph[id].append(other)
     return graph
 
@@ -107,7 +107,7 @@ def RANSAC(query_img,candidate_img,path,orb):
 
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
     matches = bf.match(descriptors_q, descriptors_c)
-    # Apply ratio test
+
     good = sorted(matches,key=lambda x:x.distance)
     pts_c = np.float32([kp_c[m.trainIdx].pt for m in good]).reshape(-1,1,2)
     pts_q= np.float32([kp_q[m.queryIdx].pt for m in good]).reshape(-1,1,2)
@@ -130,35 +130,43 @@ def RANSAC(query_img,candidate_img,path,orb):
 
 def RANSAC_refinement_Graph(graph,path,orb):
     verified_graph = defaultdict(list)
+    seed_pair = (None,None)
+    max_inlier = -1
     for query_img, candidates in graph.items():
         for candidate_img in candidates:
             _,num_inliers,_,_ = RANSAC(query_img, candidate_img,path,orb)
-            if num_inliers >= 15:  # e.g., 15-30
-                verified_graph[query_img].append(candidate_img)
-    
-    return verified_graph
+            if num_inliers >= 29:  # e.g., 15-30
+                verified_graph[query_img].append((candidate_img,num_inliers))
+                if(num_inliers>max_inlier):
+                    seed_pair = (query_img,candidate_img)
+                    max_inlier= num_inliers
+    return verified_graph,seed_pair,max_inlier
 ###############################################################
 def BoW_main():
-    path = "/media/ahaanbanerjee/Crucial X9/SfM/Data/train/multi-temporal-temple-baalshamin/images/"
-    orb = cv2.ORB_create(nfeatures=5000)
+    path = "/media/ahaanbanerjee/Crucial X9/SfM/Data/train/church/images/"
+    orb = cv2.ORB_create(nfeatures=2000)
     img_id , descprs = feature_extractor(path,orb)
-    # flattned_desc = descprs.reshape(-1,32)
-    # bow = BoW(branching_factor=15,max_depth=8)
+    flattned_desc = descprs.reshape(-1,32)
+    bow = BoW(branching_factor=15,max_depth=8)
     # bow.fit(flattned_desc)
     # print(bow.leaf_count)
     # #print(bow.tree.centroid)
     # for img_name, descs in zip(img_id, descprs):
     #     bow.inv_index(img_name, descs)
 
-    # with open('hkm_bal_5000.pkl', 'wb') as f:
+    # with open('hkm_tree_late.pkl', 'wb') as f:
     #     pickle.dump(bow, f)
 
+    print("TreeDone")
 # --- Later, to load it back ---
-    with open('hkm_bal_5000.pkl', 'rb') as f:
+    with open('hkm_tree_late.pkl', 'rb') as f:
         loaded_tree = pickle.load(f)
     
-    #sc_grph = scene_graph(img_id,descprs,loaded_tree)
-    return img_id,descprs,orb#RANSAC_refinement_Graph(sc_grph,path,orb),orb
+    sc_grph = scene_graph(img_id,descprs,loaded_tree)
+    #print(sc_grph)
+    #print('#####')
+    grph,pair,inlier =RANSAC_refinement_Graph(sc_grph,path,orb)
+    return img_id,descprs,grph,pair,orb
 
 # if __name__ == '__main__':
 #     BoW_main()

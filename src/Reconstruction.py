@@ -5,6 +5,7 @@ import json
 import cv2
 import open3d as o3d
 import matplotlib.pyplot as plt
+from BundleAdjustment import bundle_adjustment
 def Camera_Params(file_path, img_id):
     data = pd.read_csv(file_path)
 
@@ -26,59 +27,78 @@ def Camera_Params(file_path, img_id):
 
 
 def projection_mat(K, R, t):
-    t = t / np.linalg.norm(t)
+    #t = t / np.linalg.norm(t)
     t = t.reshape(3, 1)      # ensure 3×1
     Rt = np.hstack((R, t))   # 3×4
     return K @ Rt            # 3×4
 
-def projection_2D_3D(scene_graph,all_R,all_k,all_t,img_id,path,orb):
+
+def triangulation(q_img,c_img,path,orb,img_id):
+    _, num_inliers, pts_c, pts_q = RANSAC(q_img, c_img, path, orb)
+
+    if num_inliers < 8 or pts_q.shape[1] < 8:
+        return
+
+    try:
+        q_idx = img_id.index(q_img)
+        c_idx = img_id.index(c_img)
+    except ValueError:
+        return
+
+    P_q = projection_mat(all_k[q_idx], all_R[q_idx], all_t[q_idx])
+    P_c = projection_mat(all_k[c_idx], all_R[c_idx], all_t[c_idx])
+    points_4D = cv2.triangulatePoints(P_q, P_c, pts_q, pts_c)
+    point_3D = (points_4D[:3, :] / points_4D[3, :]).T
+    return point_3D,pts_q,pts_c,all_k[q_idx],all_R[q_idx],all_t[q_idx],all_k[c_idx],all_R[c_idx],all_t[c_idx]
+
+
+def projection_2D_3D(scene_graph, seed_pair, all_R, all_k, all_t, img_id, path, orb):
     all_points_3D = []
-    visited_edges = set() 
-    for q in range(len(img_id)):
-        if img_id[q] in scene_graph.keys():
-            for c in scene_graph[img_id[q]]:
-                if (img_id[q],c) not in visited_edges and (c,img_id[q]) not in visited_edges:
-                    visited_edges.add((img_id[q],c))
-                    _,num_inliers,pts_c,pts_q = RANSAC(img_id[q],c,path,orb)
-                    if num_inliers < 8 or pts_q.shape[1] < 8:
-                        continue
-                    c_idx = img_id.index(c,0,len(img_id))
-                    P_q = projection_mat(all_k[q],all_R[q],all_t[q])
-                    P_c=  projection_mat(all_k[c_idx],all_R[c_idx],all_t[c_idx])
-                    points_4D = cv2.triangulatePoints(P_q,P_c,pts_q,pts_c) # (X,Y,Z,W)
-                    valid_mask = np.abs(points_4D[3, :]) > 1e-4
-                    point_3D = (points_4D[:3, valid_mask] / points_4D[3, valid_mask]).T
-                    all_points_3D.append(point_3D)
-    #print(visited_edges)
+    visited_pairs = set()
+    points_3D, src_pts,dest_pts,K1,R1,t1,K2,R2,t2 = triangulation(seed_pair[0],seed_pair[1],path,orb,img_id)
+    refined_3D,refined_rv,refined_t = bundle_adjustment(points_3D.T, src_pts.T,dest_pts.T,K1,R1,t1,K2,R2,t2)
+    all_points_3D.append(refined_3D)
+    visited_pairs.add(seed_pair)
+    for i in scene_graph.keys():
+        for a in scene_graph[i]:
+            if (i,a[0]) not in visited_pairs:
+                points_3D, src_pts,dest_pts,K1,R1,t1,K2,R2,t2 = triangulation(i,a[0],path,orb,img_id)
+                # print(points_3D.shape)
+                # print(src_pts.shape)
+                # print(dest_pts.shape)
+                refined_3D,refined_rv,refined_t = bundle_adjustment(points_3D.T, src_pts.T,dest_pts.T,K1,R1,t1,K2,R2,t2)
+                all_points_3D.append(refined_3D)
+                visited_pairs.add((i,a[0]))
     return all_points_3D
+
 
 ###########################################################################
 if __name__ == '__main__':
-    csv_path = '/media/ahaanbanerjee/Crucial X9/SfM/src/camera_params_baalShamin.csv'
-    img_path =  "/media/ahaanbanerjee/Crucial X9/SfM/Data/train/multi-temporal-temple-baalshamin/images/"
-    img_id, descprs, scene_graph,orb = BoW_main()
+    csv_path = '/media/ahaanbanerjee/Crucial X9/SfM/src/camera_params_church.csv'
+    img_path =  "/media/ahaanbanerjee/Crucial X9/SfM/Data/train/church/images/"
+    img_id, descprs, scene_graph,pair,orb = BoW_main()
     all_R, all_t, all_k = Camera_Params(csv_path,img_id)
-    # print(img_id[5])
+    print(pair)
+    # print(img_id[img_id.index('00006.png',0,len(img_id))])
     # print(all_R[5])
     # print(all_t[5])
     # print(all_k[5])
     # K_mean = np.mean(all_k, axis=0)
     # print(K_mean)
     # # print(scene_graph)
-    # points_3D = projection_2D_3D(scene_graph,all_R,all_k,all_t,img_id,img_path,orb)
-    
-    # all_pts = np.vstack(points_3D,dtype=np.float32)
+    all_pts = projection_2D_3D(scene_graph,pair,all_R,all_k,all_t,img_id,img_path,orb)
     # mask = np.all(np.abs(all_pts) < 5000, axis=1)
     # all_pts = all_pts[mask]
-    # print(all_pts.shape)
-    # # #############################
+    all_pts = np.vstack(all_pts)
+    print(all_pts.shape)
+    # #############################
     
-    # pcd = o3d.geometry.PointCloud()
-    # pcd.points = o3d.utility.Vector3dVector(all_pts)
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(all_pts)
 
-    # pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+    pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
 
-    # # Optionally orient normals to be consistent with the viewpoint
-    # pcd.orient_normals_towards_camera_location(np.array([0, 0, 0]))
+    # Optionally orient normals to be consistent with the viewpoint
+    pcd.orient_normals_towards_camera_location(np.array([0, 0, 0]))
 
-    # o3d.visualization.draw_geometries([pcd], window_name="3D Reconstruction", width=800, height=600, left=50, top=50)
+    o3d.visualization.draw_geometries([pcd], window_name="3D Reconstruction", width=800, height=600, left=50, top=50)
