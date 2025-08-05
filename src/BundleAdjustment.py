@@ -3,8 +3,8 @@ import numpy as np
 
 def bundle_adjustment(points_3d, 
                       src_pts, dst_pts, 
-                      K1, R1, t1,     # Intrinsics/extrinsics for the first (reference) camera
-                      K2, R2, t2):    # Intrinsics/extrinsics for the second (to refine) camera
+                      K1, R1, t1,    
+                      K2, R2, t2):    
     """
     Refine the pose (R2, t2) of camera 2 and re-triangulate points between camera 1 and 2.
     - points_3d: 3×N array of existing 3D points in world coords.
@@ -17,7 +17,7 @@ def bundle_adjustment(points_3d,
     # Prepare for solvePnP
     obj_pts = points_3d.T.astype(np.float64)      # shape: N×3
     img_pts = dst_pts.astype(np.float64)          # shape: N×2
-    cam_mat = K2           # use K2 for camera2
+    cam_mat = np.array(K2,dtype=np.float64)           # use K2 for camera2
     dist_coeffs = np.zeros((4, 1), dtype=np.float64)
 
     # Initial guess for rvec2, tvec2
@@ -48,8 +48,8 @@ def bundle_adjustment(points_3d,
     P2 = K2 @ np.hstack((R2_refined, t2_refined.reshape(3, 1)))
 
     # Triangulate using the original correspondences (src_pts in cam1, dst_pts in cam2)
-    pts1 = src_pts.T  # shape: 2×N
-    pts2 = dst_pts.T  # shape: 2×N
+    pts1 = src_pts 
+    pts2 = dst_pts  
     points_4D = cv2.triangulatePoints(P1, P2, pts1, pts2)
     pts3d_refined = (points_4D[:3, :] / points_4D[3, :]).T  # shape: N×3
     #print(pts3d_refined.shape)

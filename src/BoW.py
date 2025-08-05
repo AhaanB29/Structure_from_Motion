@@ -102,29 +102,37 @@ def scene_graph(img_id,descriptors,tree):
 def RANSAC(query_img,candidate_img,path,orb):
     q_img = cv2.imread(path+query_img,cv2.IMREAD_GRAYSCALE)
     c_img = cv2.imread(path+candidate_img,cv2.IMREAD_GRAYSCALE)
-    kp_q,descriptors_q = orb.detectAndCompute(q_img,None)
-    kp_c,descriptors_c = orb.detectAndCompute(c_img,None)
+    sift = cv2.SIFT_create(nfeatures=8000)
+    kp_q,descriptors_q = sift.detectAndCompute(q_img,None)
+    kp_c,descriptors_c = sift.detectAndCompute(c_img,None)
 
-    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
-    matches = bf.match(descriptors_q, descriptors_c)
+    FLANN_INDEX_KDTREE = 1
+    index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
+    search_params = dict(checks=100)  # Increased number of checks for better matching
 
-    good = sorted(matches,key=lambda x:x.distance)
+    flann = cv2.FlannBasedMatcher(index_params, search_params)
+    matches = flann.knnMatch(descriptors_q, descriptors_c, k=2)
+
+    good = [] #sorted(matches,key=lambda x:x.distance)
+    for m,n in matches:
+        if (m.distance < 0.7*n.distance):
+            good.append(m) 
     pts_c = np.float32([kp_c[m.trainIdx].pt for m in good]).reshape(-1,1,2)
     pts_q= np.float32([kp_q[m.queryIdx].pt for m in good]).reshape(-1,1,2)
     
-    F, mask = cv2.findFundamentalMat(
-        pts_c, pts_q, cv2.FM_RANSAC,
-        ransacReprojThreshold=1.0, confidence=0.99
-    )
+    # F, mask = cv2.findFundamentalMat(
+    #     pts_c, pts_q, cv2.FM_RANSAC,
+    #     ransacReprojThreshold=1.0, confidence=0.99
+    # )
 
-    if mask is None:
-        return [], 0, kp_q, kp_c
+    # if mask is None:
+    #     return [], 0, kp_q, kp_c
 
-    inlier_matches = [good[i] for i in range(len(good)) if mask[i][0]]
-    num_inliers = np.sum(mask)
-    pts_c = np.float32([kp_c[m.trainIdx].pt for m in inlier_matches]).T.reshape(2, -1)
-    pts_q = np.float32([kp_q[m.queryIdx].pt for m in inlier_matches]).T.reshape(2, -1)
-    return inlier_matches, num_inliers, pts_c, pts_q
+    # inlier_matches = [good[i] for i in range(len(good)) if mask[i][0]]
+    # num_inliers = np.sum(mask)
+    # pts_c = np.float32([kp_c[m.trainIdx].pt for m in inlier_matches]).T.reshape(2, -1)
+    # pts_q = np.float32([kp_q[m.queryIdx].pt for m in inlier_matches]).T.reshape(2, -1)
+    return good, len(good), pts_c, pts_q
 
 
 
@@ -143,7 +151,7 @@ def RANSAC_refinement_Graph(graph,path,orb):
     return verified_graph,seed_pair,max_inlier
 ###############################################################
 def BoW_main():
-    path = "/media/ahaanbanerjee/Crucial X9/SfM/Data/train/church/images/"
+    path = "/media/ahaanbanerjee/Crucial X9/SfM/Data/IMC/train/church/images/"
     orb = cv2.ORB_create(nfeatures=5000)
     img_id , descprs = feature_extractor(path,orb)
     flattned_desc = descprs.reshape(-1,32)

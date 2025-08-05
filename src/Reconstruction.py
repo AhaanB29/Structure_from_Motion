@@ -6,9 +6,26 @@ import cv2
 import open3d as o3d
 import matplotlib.pyplot as plt
 from BundleAdjustment import bundle_adjustment
+
+def get_colors(img_nm, pts, path):
+    img1 = cv2.imread(path + img_nm, cv2.IMREAD_COLOR)
+    h, w, _ = img1.shape
+    colors = []
+    
+    for x, y in pts.reshape((-1, 2)):
+        x = int(round(x))
+        y = int(round(y))
+        
+        if 0 <= x < w and 0 <= y < h:
+            clr = img1[y, x]  
+            colors.append(clr / 255.0)  
+        else:
+            colors.append((0.0, 0.0, 0.0))  
+    
+    return np.array(colors, dtype=np.float32)
+
 def Camera_Params(file_path, img_id):
     data = pd.read_csv(file_path)
-
     # Extract corresponding matrices for each image ID
     all_R, all_t, all_k = [], [], []
     for i in img_id:
@@ -27,24 +44,25 @@ def Camera_Params(file_path, img_id):
 
 
 def projection_mat(K, R, t):
-    t = t / np.linalg.norm(t)
-    t = t.reshape(3, 1)      # ensure 3×1
-    Rt = np.hstack((R, t))   # 3×4
-    return K @ Rt            # 3×4
-
+    #t = t / np.linalg.norm(t)
+    t = t.reshape(3, 1)      
+    Rt = np.hstack((R, t))   
+    return K @ Rt            
 
 def triangulation(q_img,c_img,path,orb,img_id,all_k,all_R,all_t):
     _, num_inliers, pts_c, pts_q = RANSAC(q_img, c_img, path, orb)
 
-    if num_inliers < 8 or pts_q.shape[1] < 8:
-        return
+    if num_inliers < 8 or pts_q.shape[0] < 8:
+        print(num_inliers)
+        print(q_img,c_img)
+        return '','','','','','','','',''
 
     try:
         q_idx = img_id.index(q_img)
         c_idx = img_id.index(c_img)
     except ValueError:
         return
-
+    
     P_q = projection_mat(all_k[q_idx], all_R[q_idx], all_t[q_idx])
     P_c = projection_mat(all_k[c_idx], all_R[c_idx], all_t[c_idx])
     points_4D = cv2.triangulatePoints(P_q, P_c, pts_q, pts_c)
@@ -54,27 +72,35 @@ def triangulation(q_img,c_img,path,orb,img_id,all_k,all_R,all_t):
 
 def projection_2D_3D(scene_graph, seed_pair, all_R, all_k, all_t, img_id, path, orb):
     all_points_3D = []
+    all_colors = []
     visited_pairs = set()
     points_3D, src_pts,dest_pts,K1,R1,t1,K2,R2,t2 = triangulation(seed_pair[0],seed_pair[1],path,orb,img_id,all_k,all_R,all_t)
-    refined_3D,refined_rv,refined_t = bundle_adjustment(points_3D.T, src_pts.T,dest_pts.T,K1,R1,t1,K2,R2,t2)
+    print(src_pts.shape,dest_pts.shape)
+    refined_3D,refined_rv,refined_t = bundle_adjustment(points_3D.T, src_pts,dest_pts,K1,R1,t1,K2,R2,t2)
     all_points_3D.append(refined_3D)
     visited_pairs.add(seed_pair)
-    for i in range (len(img_id)-1):
+    all_colors.append(get_colors(seed_pair[0],src_pts,path))
 
-        points_3D, src_pts,dest_pts,K1,R1,t1,K2,R2,t2 = triangulation(img_id[i],img_id[i+1],path,orb,img_id,all_k,all_R,all_t)
-        # print(points_3D.shape)
-        # print(src_pts.shape)
-        # print(dest_pts.shape)
-        refined_3D,refined_rv,refined_t = bundle_adjustment(points_3D.T, src_pts.T,dest_pts.T,K1,R1,t1,K2,R2,t2)
-        all_points_3D.append(refined_3D)
+    for i in range(0,len(img_id)-1):
+        if(img_id[i],img_id[i+1]) not in visited_pairs:
+            visited_pairs.add((img_id[i],img_id[i+1]))
+            points_3D, src_pts,dest_pts,K1,R1,t1,K2,R2,t2 = triangulation(img_id[i],img_id[i+1],path,orb,img_id,all_k,all_R,all_t)
+            if(len(points_3D)==0):
+                continue
+            # print(points_3D.shape)
+            # print(src_pts.shape)
+            # print(dest_pts.shape)
+            all_colors.append(get_colors(img_id[i],src_pts,path))
+            refined_3D,refined_rv,refined_t = bundle_adjustment(points_3D.T, src_pts,dest_pts,K1,R1,t1,K2,R2,t2)
+            all_points_3D.append(refined_3D)
 
-    return all_points_3D
+    return all_points_3D,all_colors
 
 
 ###########################################################################
 if __name__ == '__main__':
     csv_path = '/media/ahaanbanerjee/Crucial X9/SfM/src/camera_params_church.csv'
-    img_path =  "/media/ahaanbanerjee/Crucial X9/SfM/Data/train/church/images/"
+    img_path =  "/media/ahaanbanerjee/Crucial X9/SfM/Data/IMC/train/church/images/"
     img_id, descprs, scene_graph,pair,orb = BoW_main()
     all_R, all_t, all_k = Camera_Params(csv_path,img_id)
     print(pair)
@@ -85,19 +111,26 @@ if __name__ == '__main__':
     # K_mean = np.mean(all_k, axis=0)
     # print(K_mean)
     # # print(scene_graph)
-    all_pts = projection_2D_3D(scene_graph,pair,all_R,all_k,all_t,img_id,img_path,orb)
+    all_pts,all_clrs = projection_2D_3D(scene_graph,pair,all_R,all_k,all_t,img_id,img_path,orb)
     # mask = np.all(np.abs(all_pts) < 5000, axis=1)
     # all_pts = all_pts[mask]
     all_pts = np.vstack(all_pts)
+    all_clrs = np.vstack(all_clrs,dtype=np.float32)
     print(all_pts.shape)
     # #############################
     
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(all_pts)
+    pcd.colors = o3d.utility.Vector3dVector(all_clrs)  
 
     pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
-
-    # Optionally orient normals to be consistent with the viewpoint
     pcd.orient_normals_towards_camera_location(np.array([0, 0, 0]))
 
-    o3d.visualization.draw_geometries([pcd], window_name="3D Reconstruction", width=800, height=600, left=50, top=50)
+    # Visualize
+    o3d.visualization.draw_geometries(
+        [pcd],  window_name="3D Reconstruction with Color",
+        width=800,
+        height=600,
+        left=50,
+        top=50
+    )
