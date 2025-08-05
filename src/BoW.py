@@ -85,7 +85,7 @@ def feature_extractor(dir_path,orb):
         kp,descriptors = orb.detectAndCompute(img,None)
         all_descriptors.append(descriptors)
         img_id.append(img_name)
-    return img_id,np.array(all_descriptors)
+    return img_id,np.vstack(all_descriptors)
 
 
 def scene_graph(img_id,descriptors,tree):
@@ -144,7 +144,7 @@ def RANSAC_refinement_Graph(graph,path,orb):
 ###############################################################
 def BoW_main():
     path = "/media/ahaanbanerjee/Crucial X9/SfM/Data/train/church/images/"
-    orb = cv2.ORB_create(nfeatures=2000)
+    orb = cv2.ORB_create(nfeatures=5000)
     img_id , descprs = feature_extractor(path,orb)
     flattned_desc = descprs.reshape(-1,32)
     bow = BoW(branching_factor=15,max_depth=8)
@@ -162,11 +162,18 @@ def BoW_main():
     with open('hkm_tree_late.pkl', 'rb') as f:
         loaded_tree = pickle.load(f)
     
-    sc_grph = scene_graph(img_id,descprs,loaded_tree)
-    #print(sc_grph)
-    #print('#####')
-    grph,pair,inlier =RANSAC_refinement_Graph(sc_grph,path,orb)
-    return img_id,descprs,grph,pair,orb
+    # sc_grph = scene_graph(img_id,descprs,loaded_tree)
+    # print(sc_grph)
+    # #print('#####')
+    
+    # # refined_grph,pair,inlier =RANSAC_refinement_Graph(sc_grph,path,orb)
+    # with open('scence_grph_org.pkl', 'wb') as f:
+    #     pickle.dump(sc_grph, f)
 
-# if __name__ == '__main__':
-#     BoW_main()
+    with open('scence_grph.pkl', 'rb') as f:
+        graph = pickle.load(f)
+    pair = ('00069.png', '00066.png') 
+    return img_id,descprs,graph,pair,orb
+
+if __name__ == '__main__':
+    BoW_main()

@@ -27,13 +27,13 @@ def Camera_Params(file_path, img_id):
 
 
 def projection_mat(K, R, t):
-    #t = t / np.linalg.norm(t)
+    t = t / np.linalg.norm(t)
     t = t.reshape(3, 1)      # ensure 3×1
     Rt = np.hstack((R, t))   # 3×4
     return K @ Rt            # 3×4
 
 
-def triangulation(q_img,c_img,path,orb,img_id):
+def triangulation(q_img,c_img,path,orb,img_id,all_k,all_R,all_t):
     _, num_inliers, pts_c, pts_q = RANSAC(q_img, c_img, path, orb)
 
     if num_inliers < 8 or pts_q.shape[1] < 8:
@@ -55,20 +55,19 @@ def triangulation(q_img,c_img,path,orb,img_id):
 def projection_2D_3D(scene_graph, seed_pair, all_R, all_k, all_t, img_id, path, orb):
     all_points_3D = []
     visited_pairs = set()
-    points_3D, src_pts,dest_pts,K1,R1,t1,K2,R2,t2 = triangulation(seed_pair[0],seed_pair[1],path,orb,img_id)
+    points_3D, src_pts,dest_pts,K1,R1,t1,K2,R2,t2 = triangulation(seed_pair[0],seed_pair[1],path,orb,img_id,all_k,all_R,all_t)
     refined_3D,refined_rv,refined_t = bundle_adjustment(points_3D.T, src_pts.T,dest_pts.T,K1,R1,t1,K2,R2,t2)
     all_points_3D.append(refined_3D)
     visited_pairs.add(seed_pair)
-    for i in scene_graph.keys():
-        for a in scene_graph[i]:
-            if (i,a[0]) not in visited_pairs:
-                points_3D, src_pts,dest_pts,K1,R1,t1,K2,R2,t2 = triangulation(i,a[0],path,orb,img_id)
-                # print(points_3D.shape)
-                # print(src_pts.shape)
-                # print(dest_pts.shape)
-                refined_3D,refined_rv,refined_t = bundle_adjustment(points_3D.T, src_pts.T,dest_pts.T,K1,R1,t1,K2,R2,t2)
-                all_points_3D.append(refined_3D)
-                visited_pairs.add((i,a[0]))
+    for i in range (len(img_id)-1):
+
+        points_3D, src_pts,dest_pts,K1,R1,t1,K2,R2,t2 = triangulation(img_id[i],img_id[i+1],path,orb,img_id,all_k,all_R,all_t)
+        # print(points_3D.shape)
+        # print(src_pts.shape)
+        # print(dest_pts.shape)
+        refined_3D,refined_rv,refined_t = bundle_adjustment(points_3D.T, src_pts.T,dest_pts.T,K1,R1,t1,K2,R2,t2)
+        all_points_3D.append(refined_3D)
+
     return all_points_3D
 
 
