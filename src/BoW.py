@@ -129,15 +129,27 @@ def RANSAC(query_img, candidate_img, path, detector):
     # Extract point coordinates
     pts_q = np.float32([kp_q[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
     pts_c = np.float32([kp_c[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
-    # RANSAC to remove outliers
+    
     F, mask = cv2.findFundamentalMat(pts_q, pts_c, cv2.FM_RANSAC, ransacReprojThreshold=1.0, confidence=0.99)
     if mask is None:
         return [], 0, [], []
     # Use only inlier matches
-    inlier_matches = [good[i] for i in range(len(good)) if mask[i]]
-    pts_q_inliers = np.float32([kp_q[m.queryIdx].pt for m in inlier_matches])
-    pts_c_inliers = np.float32([kp_c[m.trainIdx].pt for m in inlier_matches])
+    inlier_matches = [good[i] for i in range(len(good)) if mask[i][0]]
+    pts_q_inliers = np.float32([kp_q[m.queryIdx].pt for m in inlier_matches]).reshape(-1, 1, 2)
+    pts_c_inliers = np.float32([kp_c[m.trainIdx].pt for m in inlier_matches]).reshape(-1, 1, 2)
 
+    #print(len(inlier_matches),len(good),len(matches))
+    # kp1 = [cv2.KeyPoint(float(x), float(y), 1) for x, y in pts_q_inliers]
+    # kp2 = [cv2.KeyPoint(float(x), float(y), 1) for x, y in pts_c_inliers]
+
+    # matches = [cv2.DMatch(_queryIdx=i, _trainIdx=i, _distance=0) for i in range(len(kp1))]
+    # img_matches = cv2.drawMatches(q_img, kp1, c_img, kp2, matches, None,5)
+
+    # plt.figure(figsize=(14, 6))
+    # plt.title("dsd")
+    # plt.imshow(cv2.cvtColor(img_matches, cv2.COLOR_BGR2RGB))
+    # plt.axis('off')
+    # plt.show()
     return inlier_matches, len(inlier_matches), pts_c_inliers, pts_q_inliers
 
 
@@ -187,7 +199,8 @@ def BoW_main():
     with open('/media/ahaanbanerjee/Crucial X9/SfM/src/artefacts/scence_grph.pkl', 'rb') as f:
         graph = pickle.load(f)
     #print(graph)
-    pair = ('00069.png', '00066.png') 
+    pair = ('00066.png', '00069.png') 
+
     return img_id,descprs,graph,pair,orb
 
 if __name__ == '__main__':

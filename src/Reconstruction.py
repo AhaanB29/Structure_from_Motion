@@ -5,7 +5,7 @@ import json
 import cv2
 import open3d as o3d
 import matplotlib.pyplot as plt
-from BundleAdjustment import bundle_adjustment
+from BA import bundle_adjustment
 
 def get_colors(img_nm, pts, path):
     img1 = cv2.imread(path + img_nm, cv2.IMREAD_COLOR)
@@ -44,7 +44,7 @@ def Camera_Params(file_path, img_id):
 
 
 def projection_mat(K, R, t):
-    #t = t / np.linalg.norm(t)
+    
     t = t.reshape(3, 1)      
     Rt = np.hstack((R, t))   
     return K @ Rt            
@@ -55,11 +55,16 @@ def triangulation_F(q_img, c_img, path, detector, img_id, all_k, R_previous, t_p
     c_idx = img_id.index(c_img)
     K1 = all_k[q_idx]
     K2 = all_k[c_idx]
+   
+    if num_inliers < 8 or pts_q.shape[0] < 8:
+        print(num_inliers)
+        print(q_img,c_img)
+        return '','','','','','',''
 
-    F, mask = cv2.findFundamentalMat(pts_q, pts_c, cv2.FM_RANSAC)
+    F, mask = cv2.findFundamentalMat(pts_q, pts_c, cv2.FM_RANSAC, 1.0, 0.99)
     if F is None or F.shape != (3,3):
         return '','','','','','','' 
-
+   
     # Compute Essential Matrix
     E = K2.T @ F @ K1
 
@@ -69,7 +74,7 @@ def triangulation_F(q_img, c_img, path, detector, img_id, all_k, R_previous, t_p
 
     # Recover pose using normalized coordinates and identity matrix
     _, R, t, mask_pose = cv2.recoverPose(E, pts_q_norm, pts_c_norm, np.eye(3))
-
+    t = t / np.linalg.norm(t)
     # Compose pose
     R1_global = R_previous
     t1_global = t_previous  
@@ -83,20 +88,20 @@ def triangulation_F(q_img, c_img, path, detector, img_id, all_k, R_previous, t_p
     # P_c = projection_mat(K2, R_total, t_total)
 
     # Triangulate using original pixel coordinates
+    
     points_4D = cv2.triangulatePoints(P_q, P_c, pts_q, pts_c)
     points_3D = (points_4D[:3, :] / points_4D[3, :]).T
 
     return points_3D, pts_q, pts_c, R2_global, t2_global, K1, K2
 
 
-
-def triangulation(q_img,c_img,path,detector,img_id,all_k,all_R,all_t,):
-    _, num_inliers, pts_c, pts_q = RANSAC(q_img, c_img, path, detector)
+def triangulation(q_img,c_img,path,detector,img_id,all_k,all_R,all_t):
+    match, num_inliers, pts_c, pts_q = RANSAC(q_img, c_img, path, detector)
 
     if num_inliers < 8 or pts_q.shape[0] < 8:
         print(num_inliers)
         print(q_img,c_img)
-        return '','','','','','','','',''
+        return '','','','','','',""
 
     try:
         q_idx = img_id.index(q_img)
@@ -108,7 +113,7 @@ def triangulation(q_img,c_img,path,detector,img_id,all_k,all_R,all_t,):
     P_c = projection_mat(all_k[c_idx], all_R[c_idx], all_t[c_idx])
     points_4D = cv2.triangulatePoints(P_q, P_c, pts_q, pts_c)
     point_3D = (points_4D[:3, :] / points_4D[3, :]).T
-    return point_3D,pts_q,pts_c,all_k[q_idx],all_R[q_idx],all_t[q_idx],all_k[c_idx],all_R[c_idx],all_t[c_idx]
+    return point_3D,pts_q,pts_c,all_R[c_idx],all_t[c_idx],all_k[q_idx],all_k[c_idx]
 
 
 def projection_2D_3D(scene_graph, seed_pair, all_R, all_k, all_t, img_id, path, detector):
@@ -116,35 +121,57 @@ def projection_2D_3D(scene_graph, seed_pair, all_R, all_k, all_t, img_id, path, 
     all_colors = []
     visited_pairs = set()
 
-    R_total = np.eye(3)
-    t_total = np.zeros((3,1))
+    # Initial triangulation with seed pair
+    points_3D, src_pts, dest_pts, R_total, t_total, K1, K2 = triangulation(
+        seed_pair[0], seed_pair[1], path, detector, img_id, all_k, all_R, all_t)
+    points_3D, R_total, t_total,inlier_indices = bundle_adjustment(
+        points_3D.T, src_pts, dest_pts, K1, K2, R_total, t_total)
 
-    R_previous = R_total.copy()
-    t_previous = t_total.copy()
+    # Filter by Z (depth) between 0 and 200
+    z_vals = points_3D[:, 2]
+    mask = (z_vals >= 0) & (z_vals < 200)
+    filtered_pts = points_3D[mask]
+    filtered_src_pts = src_pts.reshape(-1, 2)[inlier_indices]
+    filtered_colors = get_colors(seed_pair[0], filtered_src_pts[mask], path)
 
-    points_3D, src_pts,dest_pts,R_total,t_total,K1,K2 = triangulation_F(seed_pair[0],seed_pair[1],path,detector,img_id,all_k,R_previous,t_previous)
-    print(src_pts.shape,dest_pts.shape)
-    print(R_total.shape,t_total.shape)
-    refined_3D,R_total,t_total = bundle_adjustment(points_3D.T, src_pts,dest_pts,K1,K2,R_total,t_total)
-    all_points_3D.append(refined_3D)
+    all_points_3D.append(filtered_pts)
+    all_colors.append(filtered_colors)
     visited_pairs.add(seed_pair)
-    all_colors.append(get_colors(seed_pair[0],src_pts,path))
 
-    R_previous,t_previous = R_total.copy(),t_total.copy()
-    for i in range(len(img_id)-1):
-        #visited_pairs.add((i,a[0]))
-        points_3D, src_pts,dest_pts,R_total,t_total,K1,K2 = triangulation_F(img_id[i],img_id[i+1],path,detector,img_id,all_k,R_previous,t_previous)
-        if(len(points_3D)==0):
-            continue
-        # print(points_3D.shape)
-        # print(src_pts.shape)
-        # print(dest_pts.shape)
-        all_colors.append(get_colors(img_id[i],src_pts,path))
-        refined_3D,R_total,t_total = bundle_adjustment(points_3D.T, src_pts,dest_pts,K1,K2,R_total,t_total)
-        all_points_3D.append(refined_3D)
-        previous_R = R_total.copy()
-        previous_t = t_total.copy()
-    return all_points_3D,all_colors
+    for i in scene_graph.keys():
+        for a in scene_graph[i]:
+            pair = (i, a[0])
+            if pair not in visited_pairs and (a[0], i) not in visited_pairs:
+                visited_pairs.add(pair)
+
+                points_3D, src_pts, dest_pts, R_total, t_total, K1, K2 = triangulation(
+                    i, a[0], path, detector, img_id, all_k, all_R, all_t)
+                if len(points_3D) == 0:
+                    continue
+
+                points_3D, R_total, t_total, inlier_indices= bundle_adjustment(
+                    points_3D.T, src_pts, dest_pts, K1, K2, R_total, t_total)
+
+                # Filter by Z (depth)
+                z_vals = points_3D[:, 2]
+                mask = (z_vals >= 0) & (z_vals < 200)
+                filtered_pts = points_3D[mask]
+                filtered_src_pts = src_pts.reshape(-1, 2)[inlier_indices]
+                filtered_colors = get_colors(i, filtered_src_pts[mask], path)
+
+                all_points_3D.append(filtered_pts)
+                all_colors.append(filtered_colors)
+
+                # Visualization
+                current_pts = np.vstack(all_points_3D)
+                current_clrs = np.vstack(all_colors)
+
+                print('Mean depth:', np.mean(current_pts[:, 2]),
+                      'Min:', np.min(current_pts[:, 2]),
+                      'Max:', np.max(current_pts[:, 2]))
+
+    return all_points_3D, all_colors
+
 
 
 ###########################################################################
@@ -159,8 +186,6 @@ if __name__ == '__main__':
     # print(all_R[5])
     # print(all_t[5])
     # print(all_k[5])
-    # K_mean = np.mean(all_k, axis=0)
-    # print(K_mean)
     # # print(scene_graph)
     all_pts,all_clrs = projection_2D_3D(scene_graph,pair,all_R,all_k,all_t,img_id,img_path,sift)
     # mask = np.all(np.abs(all_pts) < 5000, axis=1)

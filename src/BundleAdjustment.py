@@ -41,9 +41,10 @@ def bundle_adjustment(points_3d, src_pts, dst_pts, K1, K2, R, t):
     R_refined, _ = cv2.Rodrigues(rvec)
     t_refined = tvec
 
+    
     # Triangulate points again using refined pose
     P1 = K1 @ np.hstack((np.eye(3), np.zeros((3, 1))))
-    P2 = K2 @ np.hstack((R_refined, t_refined))
+    P2 = K2 @ np.hstack((R_refined, t_refined.T))
     points_4d_hom = cv2.triangulatePoints(P1, P2, src_pts, dst_pts)
     points_3d_refined = (points_4d_hom[:3, :] / points_4d_hom[3, :]).T
 
