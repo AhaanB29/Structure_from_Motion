@@ -1,56 +1,50 @@
 import cv2
 import numpy as np
 
-def bundle_adjustment(points_3d, 
-                      src_pts, dst_pts, 
-                      K1, R1, t1,    
-                      K2, R2, t2):    
-    """
-    Refine the pose (R2, t2) of camera 2 and re-triangulate points between camera 1 and 2.
-    - points_3d: 3×N array of existing 3D points in world coords.
-    - src_pts:   N×2 array of reprojected 2D points in camera1 (assumed perfect).
-    - dst_pts:   N×2 array of measured 2D points in camera2.
-    - K1, R1, t1: intrinsics/extrinsics of camera1 (reference).
-    - K2, R2, t2: intrinsics/extrinsics of camera2 (initial guess + to refine).
-    """
+def bundle_adjustment(points_3d, src_pts, dst_pts, K1, K2, R, t):
+    """ Simple bundle adjustment to refine camera pose and 3D points. """
 
-    # Prepare for solvePnP
-    obj_pts = points_3d.T.astype(np.float64)      # shape: N×3
-    img_pts = dst_pts.astype(np.float64)          # shape: N×2
-    cam_mat = np.array(K2,dtype=np.float64)           # use K2 for camera2
-    dist_coeffs = np.zeros((4, 1), dtype=np.float64)
+    # Ensure shapes and types
+    object_points = points_3d.T.astype(np.float32).reshape(-1, 3)       # (N, 3)
+    image_points = dst_pts.reshape(-1, 2).astype(np.float32)           # (N, 2)
+    camera_matrix = K2.astype(np.float32)
+    dist_coeffs = np.zeros((4, 1))  # Assuming no distortion
 
-    # Initial guess for rvec2, tvec2
-    rvec2, _ = cv2.Rodrigues(R2)
-    tvec2 = t2.reshape(3, 1).astype(np.float64)
+    # Convert R, t to rvec, tvec
 
-    # Only attempt PnP if enough points
-    if obj_pts.shape[0] < 4:
-        raise ValueError("Need at least 4 points for PnP.")
+    if R is not None and t is not None:
+        rvec, _ = cv2.Rodrigues(R)
+        tvec = t.astype(np.float32)
+    else:
+        rvec = np.zeros((3, 1), dtype=np.float32)
+        tvec = np.zeros((3, 1), dtype=np.float32)
 
-    # Refine camera2 pose
-    success, rvec2, tvec2 = cv2.solvePnP(
-        obj_pts, img_pts, cam_mat, dist_coeffs,
-        rvec2, tvec2,
-        useExtrinsicGuess=True,
-        flags=cv2.SOLVEPNP_ITERATIVE
+    # Ensure correct shape
+
+
+    # Check input validity
+    if object_points.shape[0] < 4 or image_points.shape[0] < 4:
+        print("Not enough points to run solvePnP")
+        return None, None, None
+
+    # Solve PnP
+    success, rvec, tvec = cv2.solvePnP(
+        object_points, image_points, camera_matrix, dist_coeffs,
+        rvec, tvec, useExtrinsicGuess=True, flags=cv2.SOLVEPNP_ITERATIVE
     )
+
     if not success:
-        raise RuntimeError("solvePnP failed.")
+        print("solvePnP failed to find a solution.")
+        return None, None, None
 
-    # Build refined R2, t2
-    R2_refined, _ = cv2.Rodrigues(rvec2)
-    t2_refined = tvec2.flatten()
+    # Convert rvec to rotation matrix
+    R_refined, _ = cv2.Rodrigues(rvec)
+    t_refined = tvec
 
-    # Re-triangulate between camera1 and camera2 using their respective Ks
-    # Build projection matrices with correct intrinsics:
-    P1 = K1 @ np.hstack((R1, t1.reshape(3, 1)))
-    P2 = K2 @ np.hstack((R2_refined, t2_refined.reshape(3, 1)))
+    # Triangulate points again using refined pose
+    P1 = K1 @ np.hstack((np.eye(3), np.zeros((3, 1))))
+    P2 = K2 @ np.hstack((R_refined, t_refined))
+    points_4d_hom = cv2.triangulatePoints(P1, P2, src_pts, dst_pts)
+    points_3d_refined = (points_4d_hom[:3, :] / points_4d_hom[3, :]).T
 
-    # Triangulate using the original correspondences (src_pts in cam1, dst_pts in cam2)
-    pts1 = src_pts 
-    pts2 = dst_pts  
-    points_4D = cv2.triangulatePoints(P1, P2, pts1, pts2)
-    pts3d_refined = (points_4D[:3, :] / points_4D[3, :]).T  # shape: N×3
-    #print(pts3d_refined.shape)
-    return pts3d_refined, R2_refined, t2_refined
+    return points_3d_refined, R_refined, t_refined

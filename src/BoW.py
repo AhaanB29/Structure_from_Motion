@@ -99,40 +99,46 @@ def scene_graph(img_id,descriptors,tree):
                     graph[id].append(other)
     return graph
 
-def RANSAC(query_img,candidate_img,path,orb):
-    q_img = cv2.imread(path+query_img,cv2.IMREAD_GRAYSCALE)
-    c_img = cv2.imread(path+candidate_img,cv2.IMREAD_GRAYSCALE)
-    sift = cv2.SIFT_create(nfeatures=8000)
-    kp_q,descriptors_q = sift.detectAndCompute(q_img,None)
-    kp_c,descriptors_c = sift.detectAndCompute(c_img,None)
+def RANSAC(query_img, candidate_img, path, detector):
+    q_img = cv2.imread(path + query_img, cv2.IMREAD_GRAYSCALE)
+    c_img = cv2.imread(path + candidate_img, cv2.IMREAD_GRAYSCALE)
+    
+    if q_img is None or c_img is None:
+        raise ValueError("Could not read one of the images.")
 
+    # Detect keypoints and descriptors
+    kp_q, descriptors_q = detector.detectAndCompute(q_img, None)
+    kp_c, descriptors_c = detector.detectAndCompute(c_img, None)
+
+    # FLANN matcher parameters
     FLANN_INDEX_KDTREE = 1
     index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-    search_params = dict(checks=100)  # Increased number of checks for better matching
-
+    search_params = dict(checks=100)
     flann = cv2.FlannBasedMatcher(index_params, search_params)
+
+    # KNN match
     matches = flann.knnMatch(descriptors_q, descriptors_c, k=2)
+    # Ratio test
+    good = []
+    for m, n in matches:
+        if m.distance < 0.7 * n.distance:
+            good.append(m)
 
-    good = [] #sorted(matches,key=lambda x:x.distance)
-    for m,n in matches:
-        if (m.distance < 0.7*n.distance):
-            good.append(m) 
-    pts_c = np.float32([kp_c[m.trainIdx].pt for m in good]).reshape(-1,1,2)
-    pts_q= np.float32([kp_q[m.queryIdx].pt for m in good]).reshape(-1,1,2)
-    
-    # F, mask = cv2.findFundamentalMat(
-    #     pts_c, pts_q, cv2.FM_RANSAC,
-    #     ransacReprojThreshold=1.0, confidence=0.99
-    # )
+    if len(good) < 8:
+        return [], 0, [], []
+    # Extract point coordinates
+    pts_q = np.float32([kp_q[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
+    pts_c = np.float32([kp_c[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
+    # RANSAC to remove outliers
+    F, mask = cv2.findFundamentalMat(pts_q, pts_c, cv2.FM_RANSAC, ransacReprojThreshold=1.0, confidence=0.99)
+    if mask is None:
+        return [], 0, [], []
+    # Use only inlier matches
+    inlier_matches = [good[i] for i in range(len(good)) if mask[i]]
+    pts_q_inliers = np.float32([kp_q[m.queryIdx].pt for m in inlier_matches])
+    pts_c_inliers = np.float32([kp_c[m.trainIdx].pt for m in inlier_matches])
 
-    # if mask is None:
-    #     return [], 0, kp_q, kp_c
-
-    # inlier_matches = [good[i] for i in range(len(good)) if mask[i][0]]
-    # num_inliers = np.sum(mask)
-    # pts_c = np.float32([kp_c[m.trainIdx].pt for m in inlier_matches]).T.reshape(2, -1)
-    # pts_q = np.float32([kp_q[m.queryIdx].pt for m in inlier_matches]).T.reshape(2, -1)
-    return good, len(good), pts_c, pts_q
+    return inlier_matches, len(inlier_matches), pts_c_inliers, pts_q_inliers
 
 
 
@@ -167,7 +173,7 @@ def BoW_main():
 
     print("TreeDone")
 # --- Later, to load it back ---
-    with open('hkm_tree_late.pkl', 'rb') as f:
+    with open('/media/ahaanbanerjee/Crucial X9/SfM/src/artefacts/hkm_tree_late.pkl', 'rb') as f:
         loaded_tree = pickle.load(f)
     
     # sc_grph = scene_graph(img_id,descprs,loaded_tree)
@@ -178,8 +184,9 @@ def BoW_main():
     # with open('scence_grph_org.pkl', 'wb') as f:
     #     pickle.dump(sc_grph, f)
 
-    with open('scence_grph.pkl', 'rb') as f:
+    with open('/media/ahaanbanerjee/Crucial X9/SfM/src/artefacts/scence_grph.pkl', 'rb') as f:
         graph = pickle.load(f)
+    #print(graph)
     pair = ('00069.png', '00066.png') 
     return img_id,descprs,graph,pair,orb
 
