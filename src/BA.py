@@ -25,12 +25,12 @@ def bundle_adjustment(points_3d, src_pts, dst_pts, K1, K2, R, t):
     # Check input validity - increased threshold
     if object_points.shape[0] < 6 or image_points.shape[0] < 6:
         print("Not enough points to run solvePnP")
-        return points_3d.T, R, t, np.array([], dtype=np.int32)
+        return points_3d.T, R, t
     
     # Check for degenerate configurations
     if np.linalg.matrix_rank(object_points) < 3:
         print("Degenerate 3D point configuration")
-        return points_3d.T, R, t, np.array([], dtype=np.int32)
+        return points_3d.T, R, t
     
     try:
         # Solve PnP with RANSAC for robustness
@@ -43,7 +43,7 @@ def bundle_adjustment(points_3d, src_pts, dst_pts, K1, K2, R, t):
         
         if not success or inliers is None or len(inliers) < 6:
             print(f"solvePnP failed or insufficient inliers: {len(inliers) if inliers is not None else 0}")
-            return points_3d.T, R, t, np.array([], dtype=np.int32)
+            return points_3d.T, R, t
         
         print(f"Bundle adjustment: {len(inliers)}/{len(object_points)} inliers")
         
@@ -80,40 +80,41 @@ def bundle_adjustment(points_3d, src_pts, dst_pts, K1, K2, R, t):
         else:
             dst_pts_formatted = dst_pts
         
-        # Only keep src/dst pts corresponding to inliers
-        src_pts_inliers = src_pts_formatted[inlier_indices]
-        dst_pts_inliers = dst_pts_formatted[inlier_indices]
-        
         # Triangulate points again using refined pose
         P1 = K1 @ np.hstack((np.eye(3), np.zeros((3, 1))))
         P2 = K2 @ np.hstack((R_refined, t_refined))
         
+        # Ensure points are in correct format for triangulation (2, N)
         points_4d_hom = cv2.triangulatePoints(
             P1, P2, 
-            src_pts_inliers.T.astype(np.float32),  # (2, N)
-            dst_pts_inliers.T.astype(np.float32)   # (2, N)
+            src_pts_formatted.T.astype(np.float32),  # Convert to (2, N)
+            dst_pts_formatted.T.astype(np.float32)   # Convert to (2, N)
         )
         
+        # Convert to 3D points
         points_3d_refined = (points_4d_hom[:3, :] / points_4d_hom[3, :]).T
         
         # Validate triangulated points
         depths1 = points_3d_refined @ np.eye(3).T  # For camera 1 (identity)
         depths2 = points_3d_refined @ R_refined.T + t_refined.T  # For camera 2
         
+        # Check if points are in front of both cameras
         valid_mask = (depths1[:, 2] > 0.1) & (depths2[:, 2] > 0.1)
-        distance_mask = np.linalg.norm(points_3d_refined, axis=1) < 100.0
+        
+        if np.sum(valid_mask) < len(points_3d_refined) * 0.5:
+            print("Too many points behind cameras, keeping original")
+            return points_3d.T, R, t
+        
+        # Filter points with reasonable depth
+        distance_mask = np.linalg.norm(points_3d_refined, axis=1) < 20
         final_mask = valid_mask & distance_mask
         
         if np.sum(final_mask) >= 6:
             points_3d_refined = points_3d_refined[final_mask]
-            # Map: inlier_indices[final_mask] gives indices in original input ordering
-            inlier_indices_final = inlier_indices[final_mask]
             print(f"Filtered to {len(points_3d_refined)} valid points")
-            return points_3d_refined, R_refined, t_refined, inlier_indices_final.astype(np.int32)
-        else:
-            # If too few pass Z/depth test, fallback and still return indices
-            return points_3d_refined, R_refined, t_refined, inlier_indices.astype(np.int32)
+        
+        return points_3d_refined, R_refined, t_refined
         
     except Exception as e:
         print(f"Bundle adjustment failed with exception: {e}")
-        return points_3d.T, R, t, np.array([], dtype=np.int32)
+        return points_3d.T, R, t

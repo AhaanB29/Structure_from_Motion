@@ -44,7 +44,8 @@ def Camera_Params(file_path, img_id):
 
 
 def projection_mat(K, R, t):
-    
+    # = t/np.linalg.norm(t)
+    #print(t.shape)
     t = t.reshape(3, 1)      
     Rt = np.hstack((R, t))   
     return K @ Rt            
@@ -78,8 +79,8 @@ def triangulation_F(q_img, c_img, path, detector, img_id, all_k, R_previous, t_p
     # Compose pose
     R1_global = R_previous
     t1_global = t_previous  
-    R2_global = R_previous @ R  # Proper rotation composition
-    t2_global = t_previous + R_previous @ t  # Proper translation composition
+    R2_global = R_previous @ R  
+    t2_global = t_previous + R_previous @ t  
     
     P_q = projection_mat(K1, R1_global, t1_global)
     P_c = projection_mat(K2, R2_global, t2_global)
@@ -121,51 +122,78 @@ def projection_2D_3D(scene_graph, seed_pair, all_R, all_k, all_t, img_id, path, 
     all_colors = []
     visited_pairs = set()
 
-    # Initial triangulation with seed pair
-    points_3D, src_pts, dest_pts, R_total, t_total, K1, K2 = triangulation(
-        seed_pair[0], seed_pair[1], path, detector, img_id, all_k, all_R, all_t)
-    points_3D, R_total, t_total,inlier_indices = bundle_adjustment(
-        points_3D.T, src_pts, dest_pts, K1, K2, R_total, t_total)
+    R_total = np.eye(3)
+    t_total = np.zeros((3, 1))
+
+    R_previous = R_total.copy()
+    t_previous = t_total.copy()
+
+    #Initial triangulation with seed pair
+    points_3D, src_pts, dest_pts, R_total, t_total, K1, K2 = triangulation_F(
+        seed_pair[0], seed_pair[1], path, detector, img_id, all_k, R_previous,t_previous)
+    points_3D, R_total, t_total = bundle_adjustment(points_3D.T, src_pts, dest_pts, K1, K2, R_total, t_total)
 
     # Filter by Z (depth) between 0 and 200
     z_vals = points_3D[:, 2]
-    mask = (z_vals >= 0) & (z_vals < 200)
-    filtered_pts = points_3D[mask]
-    filtered_src_pts = src_pts.reshape(-1, 2)[inlier_indices]
-    filtered_colors = get_colors(seed_pair[0], filtered_src_pts[mask], path)
+    valid_mask = (
+    np.isfinite(points_3D).all(axis=1) &  # remqove NaN or inf
+    (z_vals > 0) &                        # in front of the camera
+    (z_vals < 25) )                      # depth range filter)  # avoid "infinity" points
+
+    filtered_pts = points_3D[valid_mask]
+    #filtered_src_pts = src_pts.reshape(-1, 2)[mask]
+    #filtered_colors = get_colors(seed_pair[0], src_pts, path)
 
     all_points_3D.append(filtered_pts)
-    all_colors.append(filtered_colors)
+    #all_colors.append(filtered_colors)
     visited_pairs.add(seed_pair)
 
-    for i in scene_graph.keys():
+    R_total = R_previous.copy()
+    t_total = t_previous.copy()
+
+    for i in sorted(scene_graph.keys()):
         for a in scene_graph[i]:
             pair = (i, a[0])
-            if pair not in visited_pairs and (a[0], i) not in visited_pairs:
+            if pair not in visited_pairs and (a[0],i) not in visited_pairs:
                 visited_pairs.add(pair)
 
-                points_3D, src_pts, dest_pts, R_total, t_total, K1, K2 = triangulation(
-                    i, a[0], path, detector, img_id, all_k, all_R, all_t)
+                points_3D, src_pts, dest_pts, R_total, t_total, K1, K2 = triangulation_F(i, a[0],path, detector, img_id, all_k,R_total, t_total)
                 if len(points_3D) == 0:
                     continue
 
-                points_3D, R_total, t_total, inlier_indices= bundle_adjustment(
-                    points_3D.T, src_pts, dest_pts, K1, K2, R_total, t_total)
+                points_3D, R_total, t_total = bundle_adjustment(points_3D.T, src_pts, dest_pts, K1, K2, R_total, t_total)
 
                 # Filter by Z (depth)
                 z_vals = points_3D[:, 2]
-                mask = (z_vals >= 0) & (z_vals < 200)
-                filtered_pts = points_3D[mask]
-                filtered_src_pts = src_pts.reshape(-1, 2)[inlier_indices]
-                filtered_colors = get_colors(i, filtered_src_pts[mask], path)
+                valid_mask = (np.isfinite(points_3D).all(axis=1) & (z_vals>0)&  (z_vals < 35))
+                #mask = (z_vals >= 0) & (z_vals < 30)
+                filtered_pts = points_3D[valid_mask]
+                #filtered_src_pts = src_pts.reshape(-1, 2)[mask]
+                filtered_colors = get_colors(i, src_pts, path)
 
                 all_points_3D.append(filtered_pts)
-                all_colors.append(filtered_colors)
+                #all_colors.append(filtered_colors)
 
+                R_previous = R_total.copy()
+                t_previous = t_total.copy()
                 # Visualization
                 current_pts = np.vstack(all_points_3D)
-                current_clrs = np.vstack(all_colors)
+                #current_clrs = np.vstack(all_colors)
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(current_pts)
+                #pcd.colors = o3d.utility.Vector3dVector(current_clrs)  
 
+                pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+                pcd.orient_normals_towards_camera_location(np.array([0, 0, 0]))
+
+                # Visualize
+                o3d.visualization.draw_geometries(
+                    [pcd],  window_name="3D Intermediate",
+                    width=800,
+                    height=600,
+                    left=50,
+                    top=50
+                )
                 print('Mean depth:', np.mean(current_pts[:, 2]),
                       'Min:', np.min(current_pts[:, 2]),
                       'Max:', np.max(current_pts[:, 2]))
@@ -182,22 +210,17 @@ if __name__ == '__main__':
     all_R, all_t, all_k = Camera_Params(csv_path,img_id)
     print(pair)
     sift = cv2.SIFT_create(nfeatures=8000)
-    # print(img_id[img_id.index('00006.png',0,len(img_id))])
-    # print(all_R[5])
-    # print(all_t[5])
-    # print(all_k[5])
-    # # print(scene_graph)
+  
     all_pts,all_clrs = projection_2D_3D(scene_graph,pair,all_R,all_k,all_t,img_id,img_path,sift)
-    # mask = np.all(np.abs(all_pts) < 5000, axis=1)
-    # all_pts = all_pts[mask]
+
     all_pts = np.vstack(all_pts)
-    all_clrs = np.vstack(all_clrs,dtype=np.float32)
+    #all_clrs = np.vstack(all_clrs,dtype=np.float32)
     print(all_pts.shape)
     # #############################
     
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(all_pts)
-    pcd.colors = o3d.utility.Vector3dVector(all_clrs)  
+    #pcd.colors = o3d.utility.Vector3dVector(all_clrs)  
 
     pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
     pcd.orient_normals_towards_camera_location(np.array([0, 0, 0]))
