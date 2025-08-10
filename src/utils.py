@@ -87,8 +87,9 @@ def GetImageMatches(img1,img2):
 def BaseTriangulation(kp1,kp2,mask,K1,K2,R0,t0,R,t,matches,point_cloud): 
     ref1,ref2 = [-1]*(len(kp1)),[-1]*(len(kp2))
 
-    img1pts = [kp1[m.queryIdx].pt for m in matches][mask]
-    img2pts = [kp2[m.trainIdx].pt for m in matches][mask]
+    img1pts = np.array([kp1[m.queryIdx].pt for m in matches])[mask]
+    img2pts = np.array([kp2[m.trainIdx].pt for m in matches])[mask]
+
     img1ptsHom = cv2.convertPointsToHomogeneous(img1pts)[:,0,:]
     img2ptsHom = cv2.convertPointsToHomogeneous(img2pts)[:,0,:]
 
@@ -98,7 +99,7 @@ def BaseTriangulation(kp1,kp2,mask,K1,K2,R0,t0,R,t,matches,point_cloud):
     img1ptsNorm = cv2.convertPointsFromHomogeneous(img1ptsNorm)[:,0,:]
     img2ptsNorm = cv2.convertPointsFromHomogeneous(img2ptsNorm)[:,0,:]
 
-    pts4d = cv2.triangulatePoints(np.hstack((R0,t0)),np.hstack((R,t)),img1ptsNorm.T,img2ptsNorm.T)
+    pts4d = cv2.triangulatePoints(np.hstack((R0,t0)),np.hstack((R,t[:,np.newaxis])),img1ptsNorm.T,img2ptsNorm.T)
     pts3d = cv2.convertPointsFromHomogeneous(pts4d.T)[:,0,:]
 
     for match, X in zip(matches, pts3d):
@@ -125,7 +126,7 @@ def DisambiguateCameraPose(configSet):
     maxfrontpts = -1 
     
     for R,t,pts3d in configSet: 
-        count = CountFrontOfBothCameras(pts3d,R,t)
+        count = CountFrontOfBothCameras(pts3d,R,t[:,np.newaxis])
         
         if count > maxfrontpts: 
             maxfrontpts = count
@@ -134,34 +135,41 @@ def DisambiguateCameraPose(configSet):
     return bestR,bestt,maxfrontpts
 
 def SeedPair_PoseEstimation(kp1,desc1,kp2,desc2,K1,K2,R_0,t_0,matches):
+    
     pts1 = [kp1[m.queryIdx].pt for m in matches]
     pts2 = [kp2[m.trainIdx].pt for m in matches]
-    F,mask = cv2.findFundamentalMat(pts1,pts2,cv2.FM_RANSAC,ransacReprojThreshold=1.0)
+    pts1,pts2 = np.array(pts1),np.array(pts2)
+    F,mask = cv2.findFundamentalMat(pts1,pts2,cv2.FM_RANSAC,1.0,0.99)
     E = K2.T.dot(F.dot(K1))
     R1,R2,t = ExtractCameraPoses(E)
     configSet = [None,None,None,None]
-    configSet[0] = (R1,t,Triangulate2Views(pts1[mask],pts2[mask],K1,K2,R_0,t_0,R1,t))
-    configSet[1] = (R1,-t,Triangulate2Views(pts1[mask],pts2[mask],K1,K2,R_0,t_0,R1,-t))
-    configSet[2] = (R2,t,Triangulate2Views(pts1[mask],pts2[mask],K1,K2,R_0,t_0,R2,t))
-    configSet[3] = (R2,-t,Triangulate2Views(pts1[mask],pts2[mask],K1,K2,R_0,t_0,R2,-t))
+    
+    configSet[0] = (R1,t,Triangulate2Views(pts1[mask],pts2[mask],R_0,t_0,K1,R1,t[:,np.newaxis],K2))
+    configSet[1] = (R1,-t,Triangulate2Views(pts1[mask],pts2[mask],R_0,t_0,K1,R1,-t[:,np.newaxis],K2))
+    configSet[2] = (R2,t,Triangulate2Views(pts1[mask],pts2[mask],R_0,t_0,K1,R2,t[:,np.newaxis],K2))
+    configSet[3] = (R2,-t,Triangulate2Views(pts1[mask],pts2[mask],R_0,t_0,K1,R2,-t[:,np.newaxis],K2))
 
     R,t,count  = DisambiguateCameraPose(configSet)
 
     return R,t,mask
 
-def ReprojectionError(img1pts,R,t,K,pts3d):
-    outh = K.dot(R.dot(pts3d.T) + t )
-    out = cv2.convertPointsFromHomogeneous(outh.T)[:,0,:]
-    return np.mean(np.sqrt(np.sum((img1pts-out)**2,axis=-1)))
+def ReprojectionError(img1pts, R, t, K, pts3d):
+    # pts3d: (N, 3) in world coords
+    pts_cam = (R @ pts3d.T) + t.reshape(3, 1)       # (3, N)
+    pts_img_h = K @ pts_cam                         # (3, N)
+    pts_img = (pts_img_h[:2] / pts_img_h[2]).T      # (N, 2)
+    
+    # Euclidean distance between measured 2D points and projected points
+    return np.mean(np.linalg.norm(img1pts - pts_img, axis=1))
 
 def Correspondence2D_3D(img_data,img,all_points3D):
-    sift=cv2.SIFT_create(nfeatures=5000)
+    sift=cv2.SIFT_create(nfeatures=8000)
     kp_new, desc_new = sift.detectAndCompute(img,None)
     matcher = cv2.BFMatcher(crossCheck=True)
     updated_3D_pts = []
     filtered_kp = []
     for id in img_data.keys():
-        _,_,ref_arr,desc_org,_ =img_data[id]
+        _,_,_,ref_arr,desc_org,_ =img_data[id]
         matches = matcher.match(desc_new, desc_org)
         matches = sorted(matches, key = lambda x:x.distance)
         img_new_idx = [m.queryIdx for m in matches]
@@ -169,16 +177,17 @@ def Correspondence2D_3D(img_data,img,all_points3D):
         for m in matches:
             idx_3d = ref_arr[m.trainIdx]
             if idx_3d != -1 :
-                updated_3D_pts.append(all_points3D[idx_3d])
+                updated_3D_pts.append(all_points3D[idx_3d][:3])
                 filtered_kp.append(kp_new[m.queryIdx].pt) 
-    return filtered_kp, updated_3D_pts if len(updated_3D_pts)!=0 else all_points3D, desc_new,kp_new
+    return np.array(filtered_kp), np.array(updated_3D_pts),desc_new,kp_new
 
 def Triangulate2Views(img1pts,img2pts,R1,t1,K1,R2,t2,K2):
-    if Rbase is None: 
-        Rbase = np.eye((3,3)) 
-    if tbase is None: 
-        tbase = np.zeros((3,1))
+    if R1 is None: 
+        R1 = np.eye(3) 
+    if t1 is None: 
+        t1 = np.zeros((3,1))
 
+    
     img1ptsHom = cv2.convertPointsToHomogeneous(img1pts)[:,0,:]
     img2ptsHom = cv2.convertPointsToHomogeneous(img2pts)[:,0,:]
 
