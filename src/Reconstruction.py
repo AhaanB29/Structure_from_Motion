@@ -6,197 +6,90 @@ import cv2
 import open3d as o3d
 import matplotlib.pyplot as plt
 from BA import bundle_adjustment
-
-def get_colors(img_nm, pts, path):
-    img1 = cv2.imread(path + img_nm, cv2.IMREAD_COLOR)
-    h, w, _ = img1.shape
-    colors = []
-    
-    for x, y in pts.reshape((-1, 2)):
-        x = int(round(x))
-        y = int(round(y))
-        
-        if 0 <= x < w and 0 <= y < h:
-            clr = img1[y, x]  
-            colors.append(clr / 255.0)  
-        else:
-            colors.append((0.0, 0.0, 0.0))  
-    
-    return np.array(colors, dtype=np.float32)
-
-def Camera_Params(file_path, img_id):
-    data = pd.read_csv(file_path)
-    # Extract corresponding matrices for each image ID
-    all_R, all_t, all_k = [], [], []
-    for i in img_id:
-        row = data[data['image_name'] == i]
-        if row.empty:
-            print(f"Warning: {i} not found in CSV! Skipping.")
-            continue
-        R =np.array((data[data['image_name'] == i]['rotation_matrix']).values[0].split(';'),dtype=np.float32).reshape(3,3)
-        t = np.array((data[data['image_name']== i]['translation_vector']).values[0].split(';'),dtype=np.float32).reshape(1,3)
-        K = np.array((data[data['image_name']== i]['calibration_matrix']).values[0].split(';'),dtype=np.float32).reshape(3,3)
-
-        all_R.append(R)
-        all_t.append(t)
-        all_k.append(K)
-    return np.stack(all_R), np.stack(all_t), np.stack(all_k)
+from utils import *
 
 
-def projection_mat(K, R, t):
-    # = t/np.linalg.norm(t)
-    #print(t.shape)
-    t = t.reshape(3, 1)      
-    Rt = np.hstack((R, t))   
-    return K @ Rt            
-
-def triangulation_F(q_img, c_img, path, detector, img_id, all_k, R_previous, t_previous):
-    _, num_inliers, pts_c, pts_q = RANSAC(q_img, c_img, path, detector)
-    q_idx = img_id.index(q_img)
-    c_idx = img_id.index(c_img)
-    K1 = all_k[q_idx]
-    K2 = all_k[c_idx]
-   
-    if num_inliers < 8 or pts_q.shape[0] < 8:
-        print(num_inliers)
-        print(q_img,c_img)
-        return '','','','','','',''
-
-    F, mask = cv2.findFundamentalMat(pts_q, pts_c, cv2.FM_RANSAC, 1.0, 0.99)
-    if F is None or F.shape != (3,3):
-        return '','','','','','','' 
-   
-    # Compute Essential Matrix
-    E = K2.T @ F @ K1
-
-    # Normalize image points
-    pts_q_norm = cv2.undistortPoints(pts_q.reshape(-1, 1, 2), K1, None)
-    pts_c_norm = cv2.undistortPoints(pts_c.reshape(-1, 1, 2), K2, None)
-
-    # Recover pose using normalized coordinates and identity matrix
-    _, R, t, mask_pose = cv2.recoverPose(E, pts_q_norm, pts_c_norm, np.eye(3))
-    t = t / np.linalg.norm(t)
-    # Compose pose
-    R1_global = R_previous
-    t1_global = t_previous  
-    R2_global = R_previous @ R  
-    t2_global = t_previous + R_previous @ t  
-    
-    P_q = projection_mat(K1, R1_global, t1_global)
-    P_c = projection_mat(K2, R2_global, t2_global)
-    # Projection matrices (undistorted points used for pose, but we project using original intrinsics)
-    # P_q = projection_mat(K1, R, t)
-    # P_c = projection_mat(K2, R_total, t_total)
-
-    # Triangulate using original pixel coordinates
-    
-    points_4D = cv2.triangulatePoints(P_q, P_c, pts_q, pts_c)
-    points_3D = (points_4D[:3, :] / points_4D[3, :]).T
-
-    return points_3D, pts_q, pts_c, R2_global, t2_global, K1, K2
-
-
-def triangulation(q_img,c_img,path,detector,img_id,all_k,all_R,all_t):
-    match, num_inliers, pts_c, pts_q = RANSAC(q_img, c_img, path, detector)
-
-    if num_inliers < 8 or pts_q.shape[0] < 8:
-        print(num_inliers)
-        print(q_img,c_img)
-        return '','','','','','',""
-
-    try:
-        q_idx = img_id.index(q_img)
-        c_idx = img_id.index(c_img)
-    except ValueError:
-        return
-    
-    P_q = projection_mat(all_k[q_idx], all_R[q_idx], all_t[q_idx])
-    P_c = projection_mat(all_k[c_idx], all_R[c_idx], all_t[c_idx])
-    points_4D = cv2.triangulatePoints(P_q, P_c, pts_q, pts_c)
-    point_3D = (points_4D[:3, :] / points_4D[3, :]).T
-    return point_3D,pts_q,pts_c,all_R[c_idx],all_t[c_idx],all_k[q_idx],all_k[c_idx]
-
-
-def projection_2D_3D(scene_graph, seed_pair, all_R, all_k, all_t, img_id, path, detector):
+def SfM(scene_graph, seed_pair, all_k, img_id, path, detector):
     all_points_3D = []
     all_colors = []
-    visited_pairs = set()
+    all_errors = []
+    visited_ids = []
+    image_data = {}
+    R_0 = np.eye(3)
+    t_0 = np.zeros((3, 1))
+    K1 = all_k[img_id.index(seed_pair[0])]
+    K2 = all_k[img_id.index(seed_pair[1])]
+    img1 = cv2.imread(path+seed_pair[0])
+    img2 = cv2.imread(path+seed_pair[1])
 
-    R_total = np.eye(3)
-    t_total = np.zeros((3, 1))
 
-    R_previous = R_total.copy()
-    t_previous = t_total.copy()
+    kp1,desc1,kp2,desc2,matches= GetImageMatches(img1,img2)            # returns matched Keypoints in img1 and img2
+    R,t,mask= SeedPair_PoseEstimation(kp1,desc1,kp2,desc2,K1,K2,R_0,t_0,matches)  # estimates R and t for the other camera frame , returns F_matrix mask
 
-    #Initial triangulation with seed pair
-    points_3D, src_pts, dest_pts, R_total, t_total, K1, K2 = triangulation_F(
-        seed_pair[0], seed_pair[1], path, detector, img_id, all_k, R_previous,t_previous)
-    points_3D, R_total, t_total = bundle_adjustment(points_3D.T, src_pts, dest_pts, K1, K2, R_total, t_total)
+    pts_3d,ref1,ref2,all_points_3D = BaseTriangulation(kp1,kp2,mask,K1,K2,R_0,t_0,R,t,matches,all_points_3D)
+    img1pts = [kp1[m.queryIdx].pt for m in matches]
+    img2pts = [kp2[m.trainIdx].pt for m in matches]
 
-    # Filter by Z (depth) between 0 and 200
-    z_vals = points_3D[:, 2]
-    valid_mask = (
-    np.isfinite(points_3D).all(axis=1) &  # remqove NaN or inf
-    (z_vals > 0) &                        # in front of the camera
-    (z_vals < 25) )                      # depth range filter)  # avoid "infinity" points
+    err1 = ReprojectionError(img1pts[mask],R_0,t_0,K1,pts_3d)
+    err2 = ReprojectionError(img2pts[mask],R,t,K2,pts_3d)
+    all_errors.append(err1)
+    all_errors.append(err2)
+    visited_ids.add(seed_pair[0])
+    visited_ids.add(seed_pair[1])
 
-    filtered_pts = points_3D[valid_mask]
-    #filtered_src_pts = src_pts.reshape(-1, 2)[mask]
-    #filtered_colors = get_colors(seed_pair[0], src_pts, path)
+    image_data[seed_pair[0]] = (R_0,t_0,K1,ref1,desc1,kp1)
+    image_data[seed_pair[1]] = (R,t,K2,ref2,desc2,kp2)
+    for i in range(len(img_id)):
+        if img_id[i] not in visited_ids:
+            visited_ids.append(img_id[i])
+            K_new= all_k[img_id.index(img_id[i])]
+            img_new = cv2.imread(path+img_id[i])
+            matched_2D_pts, matched_3D_pts, desc_new,kp_new= Correspondence2D_3D(image_data,K_new,img_new)
+            retval,Rvec,tnew,mask3gt = cv2.solvePnPRansac(matched_3D_pts[:,np.newaxis],matched_2D_pts[:,np.newaxis],
+                                            K_new,None,confidence=.99,flags=cv2.SOLVEPNP_DLS)
+            Rnew,_=cv2.Rodrigues(Rvec)
+            for (ROld, tOld, kOld,_,descOld,kpOld) in image_data.values(): 
+                #Matching between old view and newly registered view.. 
+                print ('[Info]: Feature Matching..')
+                matcher = cv2.BFMatcher(crossCheck=True)
+                matches = matcher.match(descOld, desc_new)
+                matches = sorted(matches, key = lambda x:x.distance)
+                imgOldPts = [kpOld[m.queryIdx].pt for m in matches]
+                imgNewPts = [kp_new[m.queryIdx].pt for m in matches]
+                #Pruning the matches using fundamental matrix..
+                print ('[Info]: Pruning the Matches..')
+                F,mask=cv2.findFundamentalMat(imgOldPts,imgNewPts,cv2.FM_RANSAC,1.0,0.99)
+                mask = mask.flatten().astype(bool)
+                imgOldPts=imgOldPts[mask]
+                imgNewPts=imgNewPts[mask]
+                #Triangulating new points
+                print ('[Info]: Triangulating..')
+                newPts = Triangulate2Views(imgOldPts,imgNewPts,ROld,tOld,kOld,Rnew,tnew,K_new)
 
-    all_points_3D.append(filtered_pts)
-    #all_colors.append(filtered_colors)
-    visited_pairs.add(seed_pair)
+            if len(all_points_3D) == 0:
+                continue
 
-    R_total = R_previous.copy()
-    t_total = t_previous.copy()
 
-    for i in sorted(scene_graph.keys()):
-        for a in scene_graph[i]:
-            pair = (i, a[0])
-            if pair not in visited_pairs and (a[0],i) not in visited_pairs:
-                visited_pairs.add(pair)
+            #points_3D, R_total, t_total = bundle_adjustment(points_3D.T, src_pts, dest_pts, K1, K2, R_total, t_total)
+            #current_clrs = np.vstack(all_colors)
+            # pcd = o3d.geometry.PointCloud()
+            # pcd.points = o3d.utility.Vector3dVector(current_pts)
+            # #pcd.colors = o3d.utility.Vector3dVector(current_clrs)  
 
-                points_3D, src_pts, dest_pts, R_total, t_total, K1, K2 = triangulation_F(i, a[0],path, detector, img_id, all_k,R_total, t_total)
-                if len(points_3D) == 0:
-                    continue
+            # pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+            # pcd.orient_normals_towards_camera_location(np.array([0, 0, 0]))
 
-                points_3D, R_total, t_total = bundle_adjustment(points_3D.T, src_pts, dest_pts, K1, K2, R_total, t_total)
-
-                # Filter by Z (depth)
-                z_vals = points_3D[:, 2]
-                valid_mask = (np.isfinite(points_3D).all(axis=1) & (z_vals>0)&  (z_vals < 35))
-                #mask = (z_vals >= 0) & (z_vals < 30)
-                filtered_pts = points_3D[valid_mask]
-                #filtered_src_pts = src_pts.reshape(-1, 2)[mask]
-                filtered_colors = get_colors(i, src_pts, path)
-
-                all_points_3D.append(filtered_pts)
-                #all_colors.append(filtered_colors)
-
-                R_previous = R_total.copy()
-                t_previous = t_total.copy()
-                # Visualization
-                current_pts = np.vstack(all_points_3D)
-                #current_clrs = np.vstack(all_colors)
-                pcd = o3d.geometry.PointCloud()
-                pcd.points = o3d.utility.Vector3dVector(current_pts)
-                #pcd.colors = o3d.utility.Vector3dVector(current_clrs)  
-
-                pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
-                pcd.orient_normals_towards_camera_location(np.array([0, 0, 0]))
-
-                # Visualize
-                o3d.visualization.draw_geometries(
-                    [pcd],  window_name="3D Intermediate",
-                    width=800,
-                    height=600,
-                    left=50,
-                    top=50
-                )
-                print('Mean depth:', np.mean(current_pts[:, 2]),
-                      'Min:', np.min(current_pts[:, 2]),
-                      'Max:', np.max(current_pts[:, 2]))
+            # # Visualize
+            # o3d.visualization.draw_geometries(
+            #     [pcd],  window_name="3D Intermediate",
+            #     width=800,
+            #     height=600,
+            #     left=50,
+            #     top=50
+            # )
+            # print('Mean depth:', np.mean(current_pts[:, 2]),
+            #       'Min:', np.min(current_pts[:, 2]),
+            #       'Max:', np.max(current_pts[:, 2]))
 
     return all_points_3D, all_colors
 
@@ -211,7 +104,7 @@ if __name__ == '__main__':
     print(pair)
     sift = cv2.SIFT_create(nfeatures=8000)
   
-    all_pts,all_clrs = projection_2D_3D(scene_graph,pair,all_R,all_k,all_t,img_id,img_path,sift)
+    all_pts,all_clrs = SfM(scene_graph,pair,all_R,all_k,all_t,img_id,img_path,sift)
 
     all_pts = np.vstack(all_pts)
     #all_clrs = np.vstack(all_clrs,dtype=np.float32)
