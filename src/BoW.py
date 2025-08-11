@@ -199,7 +199,7 @@ def BoW_main():
     with open('/media/ahaanbanerjee/Crucial X9/SfM/src/artefacts/scence_grph.pkl', 'rb') as f:
         graph = pickle.load(f)
     #print(graph)
-    pair = ('00001.png', '00002.png') 
+    pair = ('00008.png', '00009.png') 
 
     return img_id,descprs,graph,pair,orb
 
