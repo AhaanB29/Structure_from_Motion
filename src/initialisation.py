@@ -2,21 +2,21 @@ import cv2
 import numpy as np
 from itertools import combinations
 
-def select_seed_pair(path,img_id, Ks, min_inliers=50, min_baseline_ratio=0.01, top_n_pairs=50):
+def select_seed_pair(img_id,path,Ks, min_inliers=50, min_baseline_ratio=0.01, top_n_pairs=50):
     """
-    Selects a good seed pair for SfM using per-image intrinsics.
+    Selects a good seed pair for SfM with per-image intrinsics and undistortion.
 
     Args:
-        img_id: list of image file paths.
-        Ks: list of 3x3 intrinsic matrices, same order as img_id.
-        min_inliers: minimum number of inlier matches.
-        min_baseline_ratio: baseline/depth ratio threshold.
-        top_n_pairs: limit number of candidate pairs to evaluate.
+        img_id: list of image file paths
+        Ks: list of 3x3 intrinsic matrices for each image
+        min_inliers: minimum inlier matches to consider
+        min_baseline_ratio: baseline/depth ratio threshold
+        top_n_pairs: limit number of candidate pairs to evaluate
     Returns:
         (idx1, idx2, R, t, points_3d)
     """
-    assert len(img_id) == len(Ks), "img_id and Ks must have same length"
-    
+    assert len(img_id) == len(Ks), "img_id and Ks must match in length"
+
     sift = cv2.SIFT_create(nfeatures=4000)
     features = []
 
@@ -26,8 +26,10 @@ def select_seed_pair(path,img_id, Ks, min_inliers=50, min_baseline_ratio=0.01, t
         kp, desc = sift.detectAndCompute(img, None)
         features.append((kp, desc))
 
-    print("[Info] Ranking pairs by raw match count...")
     matcher = cv2.BFMatcher()
+
+    # Rank pairs by match count
+    print("[Info] Ranking candidate pairs...")
     pair_scores = []
     for i, j in combinations(range(len(img_id)), 2):
         desc1 = features[i][1]
@@ -61,41 +63,50 @@ def select_seed_pair(path,img_id, Ks, min_inliers=50, min_baseline_ratio=0.01, t
         K1 = Ks[i]
         K2 = Ks[j]
 
-        E, mask = cv2.findEssentialMat(pts1, pts2, K1, method=cv2.RANSAC, prob=0.999, threshold=1.0)
+        # Undistort + normalize to camera coordinates
+        pts1_norm = cv2.undistortPoints(pts1.reshape(-1, 1, 2), K1, None).reshape(-1, 2)
+        pts2_norm = cv2.undistortPoints(pts2.reshape(-1, 1, 2), K2, None).reshape(-1, 2)
+
+        # Find essential matrix using normalized points
+        E, mask = cv2.findEssentialMat(pts1_norm, pts2_norm, np.eye(3),
+                                       method=cv2.RANSAC, prob=0.999, threshold=1e-3)
         if E is None:
             continue
 
-        inlier_pts1 = pts1[mask.ravel() == 1]
-        inlier_pts2 = pts2[mask.ravel() == 1]
+        inlier_pts1 = pts1_norm[mask.ravel() == 1]
+        inlier_pts2 = pts2_norm[mask.ravel() == 1]
         if len(inlier_pts1) < min_inliers:
             continue
 
-        _, R, t, _ = cv2.recoverPose(E, inlier_pts1, inlier_pts2, K1)
+        # Recover pose in normalized coordinates
+        _, R, t, _ = cv2.recoverPose(E, inlier_pts1, inlier_pts2)
 
-        P1 = K1 @ np.hstack((np.eye(3), np.zeros((3,1))))
-        P2 = K2 @ np.hstack((R, t))
+        # Triangulate in normalized coords, then reproject to world
+        P1 = np.hstack((np.eye(3), np.zeros((3, 1))))
+        P2 = np.hstack((R, t))
         pts4d = cv2.triangulatePoints(P1, P2, inlier_pts1.T, inlier_pts2.T)
-        pts3d = (pts4d[:3] / pts4d[3]).T
+        pts3d_cam1 = (pts4d[:3] / pts4d[3]).T
 
         # Cheirality check
-        front1 = pts3d[:, 2] > 0
-        front2 = (R @ pts3d.T + t).T[:, 2] > 0
+        front1 = pts3d_cam1[:, 2] > 0
+        front2 = (R @ pts3d_cam1.T + t).T[:, 2] > 0
         mask_ch = front1 & front2
-        pts3d = pts3d[mask_ch]
+        pts3d_cam1 = pts3d_cam1[mask_ch]
 
-        if len(pts3d) < min_inliers:
+        if len(pts3d_cam1) < min_inliers:
             continue
 
+        # Convert baseline ratio
         baseline = np.linalg.norm(t)
-        depth_mean = np.mean(pts3d[:, 2])
+        depth_mean = np.mean(pts3d_cam1[:, 2])
         baseline_ratio = baseline / depth_mean
 
-        score = len(pts3d) * baseline_ratio
+        score = len(pts3d_cam1) * baseline_ratio
         if baseline_ratio > min_baseline_ratio and score > best_score:
             best_score = score
-            best_pair = (i, j)
+            best_pair = (img_id[i], img_id[j])
             best_R, best_t = R, t
-            best_pts3d = pts3d
+            best_pts3d = pts3d_cam1
 
     if best_pair is None:
         raise ValueError("No suitable seed pair found.")

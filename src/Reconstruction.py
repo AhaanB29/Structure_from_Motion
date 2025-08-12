@@ -5,7 +5,8 @@ import json
 import cv2
 import open3d as o3d
 import matplotlib.pyplot as plt
-from BA import bundle_adjustment_local
+#from BA import bundle_adjustment_local
+from BundleAdjustment import *
 from utils import *
 from initialisation import select_seed_pair
 
@@ -26,21 +27,26 @@ def SfM(seed_pair, all_k, img_id, path):
     kp1,desc1,kp2,desc2,matches= GetImageMatches(img1,img2)            # returns matched Keypoints in img1 and img2
     R,t,mask= SeedPair_PoseEstimation(kp1,desc1,kp2,desc2,K1,K2,R_0,t_0,matches)  # estimates R and t for the other camera frame , returns F_matrix mask
     print(len(all_points_3D))
-    pts_3d,ref1,ref2,all_points_3D = BaseTriangulation(kp1,kp2,mask,K1,K2,R_0,t_0,R,t,matches,all_points_3D)
-    print(pts_3d.shape)
-    img1pts = np.array([kp1[m.queryIdx].pt for m in matches])
-    img2pts = np.array([kp2[m.trainIdx].pt for m in matches])
+    pts_3d,pts1,pts2= BaseTriangulation(kp1,kp2,mask,K1,K2,R_0,t_0,R,t,matches)
 
-    print(np.array(all_points_3D).shape)
-    err1 = ReprojectionError(img1pts[mask],R_0,t_0,K1,pts_3d)
-    err2 = ReprojectionError(img2pts[mask],R,t,K2,pts_3d)
+    ref1,ref2= [-1]*len(kp1),[-1]*len(kp2)
+    for match, X in zip(matches, pts_3d):
+                    p_idx = len(all_points_3D)
+                    all_points_3D.append([X[0], X[1], X[2], 255, 0, 0])  # white color for now
+                    ref2[match.trainIdx] = p_idx
+                    ref1[match.queryIdx] = p_idx
+    print(pts_3d.shape)
+    pts_3d,Rnew,tnew,_= bundle_adjustment(pts_3d,pts1,pts2,K1,K2,R,t)
+    err1 = ReprojectionError(pts1,R_0,t_0,K1,pts_3d)
+    err2 = ReprojectionError(pts2,Rnew,tnew,K2,pts_3d)
     all_errors.append(err1)
     all_errors.append(err2)
+    print(err1,err2)
     visited_ids.append(seed_pair[0])
     visited_ids.append(seed_pair[1])
 
     image_data[seed_pair[0]] = (R_0,t_0,K1,ref1,desc1,kp1)
-    image_data[seed_pair[1]] = (R,t,K2,ref2,desc2,kp2)
+    image_data[seed_pair[1]] = (Rnew,tnew,K2,ref2,desc2,kp2)
     while len(visited_ids) < len(img_id):
         #----------------------------------------Registration--------------------------------------------#
         unregistered_ids = [i for i in img_id if i not in visited_ids]
@@ -48,7 +54,7 @@ def SfM(seed_pair, all_k, img_id, path):
         visited_ids.append(best_img_id)
         K_new= all_k[img_id.index(best_img_id)]
         img_new = cv2.imread(path+best_img_id)
-        print(best_img_id)
+        print("------------------------------Image Registered :------------------",best_img_id)
         #print(matched_3D_pts.shape,matched_2D_pts.shape)
         if matched_3D_pts.shape[0] < 6:
             continue
@@ -75,41 +81,46 @@ def SfM(seed_pair, all_k, img_id, path):
             imgNewPts=imgNewPts[mask]
             #Triangulating new points
             print ('[Info]: Triangulating..')
-            newPts = Triangulate2Views(imgOldPts,imgNewPts,ROld,tOld.reshape((3,1)),kOld,Rnew,tnew.reshape((3,1)),K_new)
+            newPts,imgOldPts,imgNewPts = BaseTriangulation(kpOld,kp_new,mask,kOld,K_new,ROld,tOld,Rnew,tnew,matches)
             print(newPts.shape)
-            mask_finite = np.isfinite(newPts).all(axis=1)
-            # Cheirality mask
-            pts_cam1 = (ROld @ newPts.T + tOld.reshape(3,1)).T
-            pts_cam2 = (Rnew @ newPts.T + tnew.reshape(3,1)).T
-            mask_front = (pts_cam1[:,2] > -0.0001) & (pts_cam2[:,2] > -0.00001)
+            # mask_finite = np.isfinite(newPts).all(axis=1)
+            # # Cheirality mask
+            # pts_cam1 = (ROld @ newPts.T + tOld.reshape(3,1)).T
+            # pts_cam2 = (Rnew @ newPts.T + tnew.reshape(3,1)).T
+            # mask_front = (pts_cam1[:,2] > -0.0001) & (pts_cam2[:,2] > -0.00001)
 
-            # Depth mask (limit to 20 units in first camera frame)
-            mask_depth = (pts_cam1[:,2] < 50) & (pts_cam2[:,2] < 50)
+            # # Depth mask (limit to 20 units in first camera frame)
+            # mask_depth = (pts_cam1[:,2] < 20) & (pts_cam2[:,2] < 20)
 
-            #Angle Mask
-            view_dir1 = pts_cam1 / np.linalg.norm(pts_cam1, axis=1)[:, None]
-            view_dir2 = pts_cam2 / np.linalg.norm(pts_cam2, axis=1)[:, None]
-            angles = np.arccos(np.clip(np.sum(view_dir1 * view_dir2, axis=1), -1, 1))
-            mask_angle = np.degrees(angles) > 1.5  # COLMAP default
-            # Combine all masks
-            mask_all =  mask_depth & mask_finite & mask_front & mask_angle
+            # #Angle Mask
+            # view_dir1 = pts_cam1 / np.linalg.norm(pts_cam1, axis=1)[:, None]
+            # view_dir2 = pts_cam2 / np.linalg.norm(pts_cam2, axis=1)[:, None]
+            # angles = np.arccos(np.clip(np.sum(view_dir1 * view_dir2, axis=1), -1, 1))
+            # mask_angle = np.degrees(angles) > 1.5  # COLMAP default
+            # # Combine all masks
+            # mask_all =  mask_depth & mask_finite & mask_front & mask_angle
 
-            # Apply once
-            newPts = newPts[mask_all]
-            imgOldPts = imgOldPts[mask_all]
-            imgNewPts = imgNewPts[mask_all]
-
+            # # Apply once
+            # newPts = newPts[mask_all]
+            # imgOldPts = imgOldPts[mask_all]
+            # imgNewPts = imgNewPts[mask_all]
+            ############# Bundle Adjustment############################
+            if len(newPts) == 0:
+                  continue
+            print("Bundle Adjustment in process ..............")
+            newPts,Rnew,tnew,_= bundle_adjustment(newPts,imgOldPts,imgNewPts,kOld,K_new,Rnew,tnew)
+            ######################################################
             error = ReprojectionError(imgNewPts,Rnew,tnew,K_new,newPts)
             print("Reprojection Error: ", error)
             all_errors.append(error)
             print("After all Pruning: ",newPts.shape)
-            if len(newPts) > 0:
-                for match, X in zip(matches, newPts):
-                    p_idx = len(all_points_3D)
-                    all_points_3D.append([X[0], X[1], X[2], 255, 0, 0])  # white color for now
-                    ref[match.trainIdx] = p_idx
+            for match, X in zip(matches, newPts):
+                p_idx = len(all_points_3D)
+                all_points_3D.append([X[0], X[1], X[2], 255, 0, 0])  # white color for now
+                ref[match.trainIdx] = p_idx
 
-                
+
+                        
         image_data[best_img_id] = (Rnew,tnew,K_new,ref,desc_new,kp_new)
         
 
@@ -132,9 +143,9 @@ def SfM(seed_pair, all_k, img_id, path):
             left=50,
             top=50
         )
-        # print('Mean depth:', np.mean(current_pts[:, 2]),
-        #       'Min:', np.min(current_pts[:, 2]),
-        #       'Max:', np.max(current_pts[:, 2]))
+        # # print('Mean depth:', np.mean(current_pts[:, 2]),
+        # #       'Min:', np.min(current_pts[:, 2]),
+        # #       'Max:', np.max(current_pts[:, 2]))
 
     return all_points_3D,all_errors
 
@@ -146,9 +157,9 @@ if __name__ == '__main__':
     img_path =  "/media/ahaanbanerjee/Crucial X9/SfM/Data/IMC/train/church/images/"
     img_id, descprs, scene_graph,pair,orb = BoW_main()
     all_R, all_t, all_k = Camera_Params(csv_path,img_id)
-    #pair, _,_, _ = select_seed_pair(img_path,img_id,all_k,)
+    #pair, _,_, _ = select_seed_pair(img_id,img_path,all_k)
     #sift = cv2.SIFT_create(nfeatures=8000)
-  
+    pair = ('00013.png', '00014.png')
     all_pts,all_errors = SfM(pair,all_k,img_id,img_path)
 
     all_pts = np.vstack(all_pts,dtype=np.float32)
@@ -171,4 +182,4 @@ if __name__ == '__main__':
         left=50,
         top=50
     )
-    Toply(all_pts[:,:3],filename='Church2.ply')
+    Toply(all_pts[:,:3],filename='Church_BA.ply')

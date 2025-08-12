@@ -84,8 +84,8 @@ def GetImageMatches(img1,img2):
     return kp1,desc1,kp2,desc2,matches
 
 
-def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches, all_points_3D,
-                      parallax_deg_thresh=0.3, reproj_thresh=8.0, max_depth=50.0):
+def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches,
+                      parallax_deg_thresh=0.8, reproj_thresh=5.0, max_depth=30.0):
     """
     Triangulate matches between two images and return new 3D points and reference arrays.
 
@@ -121,10 +121,10 @@ def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches, all_point
     # Filter matches by mask
     valid_matches = [m for m, msk in zip(matches, mask) if bool(msk)]
     if len(valid_matches) < 2:
-        # not enough matches to triangulate
+        print("not enough matches to triangulate")
         ref1 = [-1] * len(kp1)
         ref2 = [-1] * len(kp2)
-        return np.zeros((0,3)), ref1, ref2, all_points_3D
+        return np.zeros((0,3)),[],[]
 
     img1_pts = np.array([kp1[m.queryIdx].pt for m in valid_matches], dtype=np.float64)  # (N,2)
     img2_pts = np.array([kp2[m.trainIdx].pt for m in valid_matches], dtype=np.float64)  # (N,2)
@@ -184,24 +184,16 @@ def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches, all_point
     kept_matches = [m for m, keep in zip(valid_matches, mask_all) if keep]
 
     # Prepare ref arrays (map keypoint index -> 3D point index)
-    ref1 = [-1] * len(kp1)
-    ref2 = [-1] * len(kp2)
-
+    # print(pts3d_good.shape)
+    # print(img1_good.shape,img2_good.shape)
     # Append each accepted 3D point to global list and set refs
-    start_idx = len(all_points_3D)
-    for i, m in enumerate(kept_matches):
-        X = pts3d_good[i]
-        # color placeholder white (you can change to actual sampled color)
-        all_points_3D.append([float(X[0]), float(X[1]), float(X[2]), 255, 255, 255])
-        global_idx = start_idx + i
-        ref1[m.queryIdx] = global_idx
-        ref2[m.trainIdx] = global_idx
 
     # If nothing kept, return empty arrays but keep ref arrays
     if pts3d_good.shape[0] == 0:
-        return np.zeros((0,3)), ref1, ref2, all_points_3D
+        print("NO GOOD 3D point")
+        return np.zeros((0,3)),[],[]
 
-    return pts3d_good, ref1, ref2, all_points_3D
+    return pts3d_good,img1_good,img2_good
 
 def TransformCoordPts(X,R,t): 
     ''' X : 3D points
@@ -244,7 +236,7 @@ def SeedPair_PoseEstimation(kp1,desc1,kp2,desc2,K1,K2,R_0,t_0,matches):
     configSet[3] = (R2,-t,Triangulate2Views(pts1[mask],pts2[mask],R_0,t_0,K1,R2,-t[:,np.newaxis],K2))
 
     R,t,count  = DisambiguateCameraPose(configSet)
-
+    print(count)
     return R,t,mask
 
 def ReprojectionError(img1pts, R, t, K, pts3d):
