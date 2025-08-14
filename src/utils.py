@@ -26,13 +26,14 @@ def Camera_Params(file_path, img_id):
     # Extract corresponding matrices for each image ID
     all_R, all_t, all_k = [], [], []
     for i in img_id:
-        row = data[data['image_name'] == i]
+        i = i[:-4]
+        row = data[data['image_id'] == i]
         if row.empty:
             print(f"Warning: {i} not found in CSV! Skipping.")
             continue
-        R =np.array((data[data['image_name'] == i]['rotation_matrix']).values[0].split(';'),dtype=np.float32).reshape(3,3)
-        t = np.array((data[data['image_name']== i]['translation_vector']).values[0].split(';'),dtype=np.float32).reshape(1,3)
-        K = np.array((data[data['image_name']== i]['calibration_matrix']).values[0].split(';'),dtype=np.float32).reshape(3,3)
+        R =np.array((data[data['image_id'] == i]['rotation_matrix']).values[0].split(' '),dtype=np.float32).reshape(3,3)
+        t = np.array((data[data['image_id']== i]['translation_vector']).values[0].split(' '),dtype=np.float32).reshape(1,3)
+        K = np.array((data[data['image_id']== i]['camera_intrinsics']).values[0].split(' '),dtype=np.float32).reshape(3,3)
 
         all_R.append(R)
         all_t.append(t)
@@ -85,7 +86,7 @@ def GetImageMatches(img1,img2):
 
 
 def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches,
-                      parallax_deg_thresh=0.8, reproj_thresh=5.0, max_depth=30.0):
+                      parallax_deg_thresh=0.25, reproj_thresh=5.0, max_depth=50.0):
     """
     Triangulate matches between two images and return new 3D points and reference arrays.
 
@@ -120,11 +121,12 @@ def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches,
 
     # Filter matches by mask
     valid_matches = [m for m, msk in zip(matches, mask) if bool(msk)]
-    if len(valid_matches) < 2:
-        print("not enough matches to triangulate")
-        ref1 = [-1] * len(kp1)
-        ref2 = [-1] * len(kp2)
-        return np.zeros((0,3)),[],[]
+  
+    # if len(len(img1_pts)) < 2:
+    #     print("not enough matches to triangulate")
+    #     ref1 = [-1] * len(kp1)
+    #     ref2 = [-1] * len(kp2)
+    #     return np.zeros((0,3)),[],[]
 
     img1_pts = np.array([kp1[m.queryIdx].pt for m in valid_matches], dtype=np.float64)  # (N,2)
     img2_pts = np.array([kp2[m.trainIdx].pt for m in valid_matches], dtype=np.float64)  # (N,2)
@@ -173,16 +175,15 @@ def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches,
     mask_angle = angles_deg > parallax_deg_thresh
 
     # Depth bound (in camera1 frame)
-    mask_depth = pts_cam1[:,2] < max_depth
+    mask_depth = (pts_cam1[:,2] < max_depth) & (pts_cam2[:,2] < max_depth)
 
-    mask_all = mask_finite & mask_front & mask_reproj & mask_angle & mask_depth
+    mask_all = mask_finite & mask_depth & mask_reproj & mask_front & mask_angle 
 
     # Apply mask
     pts3d_good = pts3d[mask_all]
     img1_good = img1_pts[mask_all]
     img2_good = img2_pts[mask_all]
-    kept_matches = [m for m, keep in zip(valid_matches, mask_all) if keep]
-
+    valid_matches_good = [valid_matches[i] for i in range(len(valid_matches)) if mask_all[i]]
     # Prepare ref arrays (map keypoint index -> 3D point index)
     # print(pts3d_good.shape)
     # print(img1_good.shape,img2_good.shape)
@@ -191,9 +192,9 @@ def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches,
     # If nothing kept, return empty arrays but keep ref arrays
     if pts3d_good.shape[0] == 0:
         print("NO GOOD 3D point")
-        return np.zeros((0,3)),[],[]
+        return np.zeros((0,3)),[],[],[]
 
-    return pts3d_good,img1_good,img2_good
+    return pts3d_good,img1_good,img2_good,valid_matches_good
 
 def TransformCoordPts(X,R,t): 
     ''' X : 3D points
@@ -248,24 +249,42 @@ def ReprojectionError(img1pts, R, t, K, pts3d):
     # Euclidean distance between measured 2D points and projected points
     return np.mean(np.linalg.norm(img1pts - pts_img, axis=1))
 
-def Correspondence2D_3D(img_data,img,all_points3D):
-    sift=cv2.SIFT_create(nfeatures=8000)
-    kp_new, desc_new = sift.detectAndCompute(img,None)
+def Correspondence2D_3D(image_data, img, all_points3D):
+
+    sift = cv2.SIFT_create(nfeatures=5000)
+    kp_new, desc_new = sift.detectAndCompute(img, None)
+
+    # Build the 'search database' of descriptors that already have 3D points
+    desc_db = []
+    pts3d_db = []
+
+    for img_id, (R, t, K, ref_arr, desc, kp) in image_data.items():
+        ref_arr = np.array(ref_arr)
+        valid_idxs = np.where(ref_arr != -1)[0]  # features with associated 3D points
+
+        if len(valid_idxs) == 0:
+            continue
+
+        desc_db.append(desc[valid_idxs])
+        pts3d_db.append(np.array([all_points3D[i][:3] for i in ref_arr[valid_idxs]]))
+
+    if len(desc_db) == 0:
+        return np.array([]), np.array([]), desc_new, kp_new
+
+    # Concatenate all descriptors and corresponding 3D points
+    desc_db = np.vstack(desc_db)
+    pts3d_db = np.vstack(pts3d_db)
+
+    # Match new image descriptors to the 3D-point descriptors
     matcher = cv2.BFMatcher(crossCheck=True)
-    updated_3D_pts = []
-    filtered_kp = []
-    for id in img_data.keys():
-        _,_,_,ref_arr,desc_org,_ =img_data[id]
-        matches = matcher.match(desc_new, desc_org)
-        matches = sorted(matches, key = lambda x:x.distance)
-        img_new_idx = [m.queryIdx for m in matches]
-        img_new_pts = [kp_new[m.queryIdx].pt for m in matches]
-        for m in matches:
-            idx_3d = ref_arr[m.trainIdx]
-            if idx_3d != -1 :
-                updated_3D_pts.append(all_points3D[idx_3d][:3])
-                filtered_kp.append(kp_new[m.queryIdx].pt) 
-    return np.array(filtered_kp), np.array(updated_3D_pts),desc_new,kp_new
+    matches = matcher.match(desc_new, desc_db)
+    matches = sorted(matches, key=lambda x: x.distance)
+
+    # Build matched 2D and 3D point arrays
+    matched_2D = np.array([kp_new[m.queryIdx].pt for m in matches], dtype=np.float32)
+    matched_3D = np.array([pts3d_db[m.trainIdx] for m in matches], dtype=np.float32)
+
+    return matched_2D, matched_3D, desc_new, kp_new
 
 def Triangulate2Views(img1pts,img2pts,R1,t1,K1,R2,t2,K2):
     if R1 is None: 
@@ -289,7 +308,8 @@ def Triangulate2Views(img1pts,img2pts,R1,t1,K1,R2,t2,K2):
     
     return pts3d
 
-def Toply(pts,filename='out.ply'): 
+def Toply(pts,clrs, filename='out.ply'):
+    clrs = np.clip(clrs * 255.0, 0, 255).astype(np.uint8) 
     f = open(filename,'w')
     f.write('ply\n')
     f.write('format ascii 1.0\n')
@@ -305,8 +325,8 @@ def Toply(pts,filename='out.ply'):
     
     f.write('end_header\n')
     
-    for pt in pts: 
-        f.write('{} {} {} 255 255 255\n'.format(pt[0],pt[1],pt[2]))
+    for pt,clr in zip(pts,clrs): 
+        f.write('{} {} {} {} {} {}\n'.format(pt[0],pt[1],pt[2],clr[0],clr[1],clr[2]))
     f.close()
 
 def select_next_image(image_data, all_points_3D, unregistered_ids, path, min_corr=30):
@@ -319,7 +339,7 @@ def select_next_image(image_data, all_points_3D, unregistered_ids, path, min_cor
     best_data = None
 
     for img_id in unregistered_ids:
-        img = cv2.imread(path + img_id)
+        img = cv2.imread(path + img_id) 
         matched_2D_pts, matched_3D_pts, desc_new, kp_new = Correspondence2D_3D(image_data, img, all_points_3D)
 
         score = matched_3D_pts.shape[0]  # number of correspondences

@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 from itertools import combinations
 
-def select_seed_pair(img_id,path,Ks, min_inliers=50, min_baseline_ratio=0.01, top_n_pairs=50):
+def select_seed_pair(img_id,path,Ks, min_inliers=50, min_baseline_ratio=0.01, top_n_pairs=10):
     """
     Selects a good seed pair for SfM with per-image intrinsics and undistortion.
 
