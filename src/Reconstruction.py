@@ -28,11 +28,11 @@ def SfM(seed_pair, all_k, img_id, path):
     print(len(all_points_3D))
     pts_3d,pts1,pts2,matches= BaseTriangulation(kp1,kp2,mask,K1,K2,R_0,t_0,R,t,matches)
     scale_factor = 7.38
-    pts_3d = pts_3d * scale_factor
-    t = t * scale_factor
+    # pts_3d = pts_3d * scale_factor
+    # t = t * scale_factor
     ref1,ref2= [-1]*len(kp1),[-1]*len(kp2)
     clrs = get_colors(seed_pair[0],pts1,path)
-    for match, X,C in zip(matches, pts_3d*7.38,clrs):
+    for match, X,C in zip(matches, pts_3d,clrs):
                     p_idx = len(all_points_3D)
                     all_points_3D.append([X[0], X[1], X[2], C[2],C[1],C[0]])
                     ref2[match.trainIdx] = p_idx
@@ -50,12 +50,27 @@ def SfM(seed_pair, all_k, img_id, path):
     image_data[seed_pair[0]] = (R_0,t_0,K1,ref1,desc1,kp1)
     image_data[seed_pair[1]] = (Rnew,tnew,K2,ref2,desc2,kp2)
 
+    pcd = o3d.geometry.PointCloud()
+    temp= np.array(all_points_3D, dtype=np.float64)
+    pcd.points = o3d.utility.Vector3dVector(temp[:,:3])
+    pcd.colors = o3d.utility.Vector3dVector(temp[:,3:])  
+
+    pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+    pcd.orient_normals_towards_camera_location(np.array([0, 0, 0]))
+
+    # Visualize
+    o3d.visualization.draw_geometries(
+        [pcd],  window_name="3D Intermediate",
+        width=800,
+        height=600,
+        left=50,
+        top=50
+    )
     while len(visited_ids) < len(img_id):
         #----------------------------------------Registration--------------------------------------------#
         unregistered_ids = [i for i in img_id if i not in visited_ids]
         best_img_id,matched_2D_pts, matched_3D_pts, desc_new,kp_new = select_next_image(image_data, all_points_3D, unregistered_ids, path)
         visited_ids.append(best_img_id)
-        print(matched_2D_pts.shape,matched_3D_pts.shape)
         K_new= all_k[img_id.index(best_img_id)]
         #img_new = cv2.imread(path+best_img_id)
         print("------------------------------Image Registered :------------------",best_img_id)
@@ -67,12 +82,11 @@ def SfM(seed_pair, all_k, img_id, path):
                                         K_new,None,confidence=0.999,reprojectionError=2.0, flags=cv2.SOLVEPNP_EPNP)
         if inliers is not None:
             Rvec,tnew = cv2.solvePnPRefineLM(matched_3D_pts[inliers.flatten()],matched_2D_pts[inliers.flatten()],K_new,None,Rvec,tnew)
-        #tnew = tnew/np.linalg.norm(tnew)
+        # tnew = tnew/np.linalg.norm(tnew)
         Rnew,_=cv2.Rodrigues(Rvec)
         #################################################################       
         ################################################################
         ref = [-1]*len(kp_new)
-
         # Triangulation
         for (ROld, tOld, kOld,Ref_Old,descOld,kpOld) in image_data.values(): 
             print ('[Info]: Feature Matching..')
@@ -86,34 +100,12 @@ def SfM(seed_pair, all_k, img_id, path):
             print ('[Info]: Pruning the Matches..')
             F,mask=cv2.findFundamentalMat(imgOldPts,imgNewPts,cv2.FM_RANSAC,1.0,0.99)
             #mask = mask.flatten().astype(bool)
-            imgOldPts=imgOldPts[mask]
-            imgNewPts=imgNewPts[mask]
             #Triangulating new points
+
+
             print ('[Info]: Triangulating..')
             newPts,imgOldPts,imgNewPts,valid_matches= BaseTriangulation(kpOld,kp_new,mask,kOld,K_new,ROld,tOld,Rnew,tnew,matches)
-            print(newPts.shape)
-            newPts=newPts*scale_factor
-            # mask_finite = np.isfinite(newPts).all(axis=1)
-            # # Cheirality mask
-            # pts_cam1 = (ROld @ newPts.T + tOld.reshape(3,1)).T
-            # pts_cam2 = (Rnew @ newPts.T + tnew.reshape(3,1)).T
-            # mask_front = (pts_cam1[:,2] > -0.0001) & (pts_cam2[:,2] > -0.00001)
-
-            # # Depth mask (limit to 20 units in first camera frame)
-            # mask_depth = (pts_cam1[:,2] < 20) & (pts_cam2[:,2] < 20)
-
-            # #Angle Mask
-            # view_dir1 = pts_cam1 / np.linalg.norm(pts_cam1, axis=1)[:, None]
-            # view_dir2 = pts_cam2 / np.linalg.norm(pts_cam2, axis=1)[:, None]
-            # angles = np.arccos(np.clip(np.sum(view_dir1 * view_dir2, axis=1), -1, 1))
-            # mask_angle = np.degrees(angles) > 1.5  # COLMAP default
-            # # Combine all masks
-            # mask_all =  mask_depth & mask_finite & mask_front & mask_angle
-
-            # # Apply once
-            # newPts = newPts[mask_all]
-            # imgOldPts = imgOldPts[mask_all]
-            # imgNewPts = imgNewPts[mask_all]
+            # newPts=newPts*scale_factor
             ############# Bundle Adjustment############################
             if len(newPts) == 0:
                   continue
@@ -125,9 +117,9 @@ def SfM(seed_pair, all_k, img_id, path):
             all_errors.append(error)
             clrs = get_colors(best_img_id,imgNewPts,path)
             print("After all Pruning: ",newPts.shape)
-            for match, X , C in zip(valid_matches, newPts*7.38,clrs):
+            for match, X , C in zip(valid_matches, newPts,clrs):
                 p_idx = len(all_points_3D)
-                all_points_3D.append([X[0], X[1], X[2], C[2],C[1],C[0]])  # white color for now
+                all_points_3D.append([X[0], X[1], X[2], C[2],C[1],C[0]])  
                 if(ref[match.trainIdx] == -1):
                     ref[match.trainIdx] = p_idx
 
@@ -164,14 +156,16 @@ def SfM(seed_pair, all_k, img_id, path):
 ###########################################################################
 if __name__ == '__main__':
     csv_path = '/media/ahaanbanerjee/Crucial X9/SfM/Data/IMC_G/train/brandenburg_gate/calibration.csv'
-    img_path =  "/media/ahaanbanerjee/Crucial X9/SfM/Data/IMC_G/train/brandenburg_gate/images/"
+    img_path =  "/media/ahaanbanerjee/Crucial X9/SfM/Data/fountain/"
     img_id, descprs, scene_graph,pair,orb = BoW_main()
-    all_R, all_t, all_k = Camera_Params(csv_path,img_id)
-    #pair, _,_, _ = select_seed_pair(img_id[:100],img_path,all_k)
-    #sift = cv2.SIFT_create(nfeatures=8000)
-    pair = ('90920828_5082887495.jpg','20133057_3035445116.jpg')
+    #all_R, all_t, all_k = Camera_Params(csv_path,img_id)
     K =np.array([ [2759.48 ,0 ,1520.69],[0 ,2764.16 ,1006.81],[0, 0, 1]],dtype=np.float32).reshape(3,3)
+    #K =np.array([ [3414.66, 0.0, 3036.64],[0.0, 3413.37, 2015.48],[0, 0, 1]],dtype=np.float32).reshape(3,3) #Facade
     all_k = [K]*len(img_id)
+    #pair, _,_, _ = select_seed_pair(img_id,img_path,all_k)
+    #sift = cv2.SIFT_create(nfeatures=8000)
+    pair = ('0000.jpg', '0001.jpg')
+    #pair = ('DSC_0391.JPG', 'DSC_0392.JPG')
     all_pts,all_errors = SfM(pair,all_k,img_id,img_path)
 
     all_pts = np.vstack(all_pts,dtype=np.float32)
@@ -194,4 +188,4 @@ if __name__ == '__main__':
         left=50,
         top=50
     )
-    Toply(all_pts[:,:3],all_pts[:,3:],filename='Fountain.ply')
+    Toply(all_pts[:,:3],all_pts[:,3:],filename='Facade_norm.ply')

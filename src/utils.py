@@ -86,7 +86,7 @@ def GetImageMatches(img1,img2):
 
 
 def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches,
-                      parallax_deg_thresh=0.25, reproj_thresh=5.0, max_depth=50.0):
+                      parallax_deg_thresh=1.80, reproj_thresh=0.004, max_depth=20.0):
     """
     Triangulate matches between two images and return new 3D points and reference arrays.
 
@@ -132,20 +132,27 @@ def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches,
     img2_pts = np.array([kp2[m.trainIdx].pt for m in valid_matches], dtype=np.float64)  # (N,2)
 
     # Build projection matrices in pixel coords
-    P1 = K1 @ np.hstack((R1, t1))   # (3x4)
-    P2 = K2 @ np.hstack((R2, t2))
+    P1 = np.hstack((R1, t1))   # (3x4)
+    P2 = np.hstack((R2, t2))
+    img1ptsHom = cv2.convertPointsToHomogeneous(img1_pts)[:,0,:]
+    img2ptsHom = cv2.convertPointsToHomogeneous(img2_pts)[:,0,:]
+    img1ptsNorm = (np.linalg.inv(K1).dot(img1ptsHom.T)).T
+    img2ptsNorm = (np.linalg.inv(K2).dot(img2ptsHom.T)).T
+
+    img1ptsNorm = cv2.convertPointsFromHomogeneous(img1ptsNorm)[:,0,:]
+    img2ptsNorm = cv2.convertPointsFromHomogeneous(img2ptsNorm)[:,0,:]
 
     # Triangulate: cv2.triangulatePoints expects 2xN arrays
-    pts4d = cv2.triangulatePoints(P1, P2, img1_pts.T.astype(np.float64), img2_pts.T.astype(np.float64))  # (4,N)
+    pts4d = cv2.triangulatePoints(P1, P2, img1ptsNorm.T.astype(np.float64), img2ptsNorm.T.astype(np.float64))  # (4,N)
     pts3d = (pts4d[:3, :] / pts4d[3, :]).T   # (N,3)
-
+    print(pts3d.shape)
     # Masks: finite, cheirality, reprojection, parallax, depth
     mask_finite = np.isfinite(pts3d).all(axis=1)
 
     # Cheirality: point in front of both cameras
     pts_cam1 = (R1 @ pts3d.T + t1).T   # shape (N,3)
     pts_cam2 = (R2 @ pts3d.T + t2).T
-    mask_front = (pts_cam1[:,2] > 1e-6) & (pts_cam2[:,2] > 1e-6)
+    mask_front = (pts_cam2[:,2] > 1e-6) & (pts_cam1[:,2] > 1e-6)
 
     # Reprojection error: project back using P1,P2 and compute Euclidean pixel error
     homog = np.hstack((pts3d, np.ones((pts3d.shape[0],1))))
@@ -153,8 +160,8 @@ def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches,
     proj2 = (P2 @ homog.T).T
     proj1_xy = proj1[:, :2] / proj1[:, 2:3]
     proj2_xy = proj2[:, :2] / proj2[:, 2:3]
-    err1 = np.linalg.norm(proj1_xy - img1_pts, axis=1)
-    err2 = np.linalg.norm(proj2_xy - img2_pts, axis=1)
+    err1 = np.linalg.norm(proj1_xy - img1ptsNorm, axis=1)
+    err2 = np.linalg.norm(proj2_xy - img2ptsNorm, axis=1)
     mask_reproj = (err1 < reproj_thresh) & (err2 < reproj_thresh)
 
     # Parallax angle check (angle between two viewing rays)
@@ -177,7 +184,7 @@ def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches,
     # Depth bound (in camera1 frame)
     mask_depth = (pts_cam1[:,2] < max_depth) & (pts_cam2[:,2] < max_depth)
 
-    mask_all = mask_finite & mask_depth & mask_reproj & mask_front & mask_angle 
+    mask_all =  mask_reproj & mask_front #& mask_angle & mask_finite & mask_depth 
 
     # Apply mask
     pts3d_good = pts3d[mask_all]
@@ -242,12 +249,10 @@ def SeedPair_PoseEstimation(kp1,desc1,kp2,desc2,K1,K2,R_0,t_0,matches):
 
 def ReprojectionError(img1pts, R, t, K, pts3d):
     # pts3d: (N, 3) in world coords
-    pts_cam = (R @ pts3d.T) + t.reshape(3, 1)       # (3, N)
-    pts_img_h = K @ pts_cam                         # (3, N)
-    pts_img = (pts_img_h[:2] / pts_img_h[2]).T      # (N, 2)
-    
-    # Euclidean distance between measured 2D points and projected points
-    return np.mean(np.linalg.norm(img1pts - pts_img, axis=1))
+    pts_cam = (R @ pts3d.T) + t.reshape(3, 1)     # (3, N)
+    pts_h = K @ pts_cam
+    pts_reproj = (pts_h[:2] / pts_h[2]).T     # (N, 2) 
+    return np.mean(np.linalg.norm(img1pts - pts_reproj, axis=1))
 
 def Correspondence2D_3D(image_data, img, all_points3D):
 

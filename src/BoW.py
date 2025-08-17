@@ -169,8 +169,8 @@ def RANSAC_refinement_Graph(graph,path,orb):
     return verified_graph,seed_pair,max_inlier
 ###############################################################
 def BoW_main():
-    path = "/media/ahaanbanerjee/Crucial X9/SfM/Data/IMC_G/train/brandenburg_gate/images/"
-    orb = cv2.ORB_create(nfeatures=5000)
+    path = "/media/ahaanbanerjee/Crucial X9/SfM/Data/fountain/"
+    orb = cv2.ORB_create(nfeatures=10)
     img_id , descprs = feature_extractor(path,orb)
     flattned_desc = descprs.reshape(-1,32)
     bow = BoW(branching_factor=15,max_depth=8)
