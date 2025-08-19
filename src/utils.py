@@ -2,7 +2,7 @@
 import cv2 
 import numpy as np
 import pandas as pd
-
+import open3d as o3d
 def get_colors(img_nm, pts, path):
     img1 = cv2.imread(path + img_nm, cv2.IMREAD_COLOR)
     h, w, _ = img1.shape
@@ -86,7 +86,7 @@ def GetImageMatches(img1,img2):
 
 
 def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches,
-                      parallax_deg_thresh=1.80, reproj_thresh=0.004, max_depth=20.0):
+                      parallax_deg_thresh=1.80, reproj_thresh=5.0, max_depth=15.0):
     """
     Triangulate matches between two images and return new 3D points and reference arrays.
 
@@ -132,20 +132,20 @@ def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches,
     img2_pts = np.array([kp2[m.trainIdx].pt for m in valid_matches], dtype=np.float64)  # (N,2)
 
     # Build projection matrices in pixel coords
-    P1 = np.hstack((R1, t1))   # (3x4)
-    P2 = np.hstack((R2, t2))
-    img1ptsHom = cv2.convertPointsToHomogeneous(img1_pts)[:,0,:]
-    img2ptsHom = cv2.convertPointsToHomogeneous(img2_pts)[:,0,:]
-    img1ptsNorm = (np.linalg.inv(K1).dot(img1ptsHom.T)).T
-    img2ptsNorm = (np.linalg.inv(K2).dot(img2ptsHom.T)).T
+    P1 = K1 @ np.hstack((R1, t1))   # (3x4)
+    P2 = K2 @ np.hstack((R2, t2))
+    # img1ptsHom = cv2.convertPointsToHomogeneous(img1_pts)[:,0,:]
+    # img2ptsHom = cv2.convertPointsToHomogeneous(img2_pts)[:,0,:]
+    # img1ptsNorm = (np.linalg.inv(K1).dot(img1ptsHom.T)).T
+    # img2ptsNorm = (np.linalg.inv(K2).dot(img2ptsHom.T)).T
 
-    img1ptsNorm = cv2.convertPointsFromHomogeneous(img1ptsNorm)[:,0,:]
-    img2ptsNorm = cv2.convertPointsFromHomogeneous(img2ptsNorm)[:,0,:]
+    # img1ptsNorm = cv2.convertPointsFromHomogeneous(img1ptsNorm)[:,0,:]
+    # img2ptsNorm = cv2.convertPointsFromHomogeneous(img2ptsNorm)[:,0,:]
 
     # Triangulate: cv2.triangulatePoints expects 2xN arrays
-    pts4d = cv2.triangulatePoints(P1, P2, img1ptsNorm.T.astype(np.float64), img2ptsNorm.T.astype(np.float64))  # (4,N)
+    pts4d = cv2.triangulatePoints(P1, P2, img1_pts.T.astype(np.float64), img2_pts.T.astype(np.float64))  # (4,N)
     pts3d = (pts4d[:3, :] / pts4d[3, :]).T   # (N,3)
-    print(pts3d.shape)
+    print(np.mean(pts3d[-1]).reshape(1,-1))
     # Masks: finite, cheirality, reprojection, parallax, depth
     mask_finite = np.isfinite(pts3d).all(axis=1)
 
@@ -160,9 +160,9 @@ def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches,
     proj2 = (P2 @ homog.T).T
     proj1_xy = proj1[:, :2] / proj1[:, 2:3]
     proj2_xy = proj2[:, :2] / proj2[:, 2:3]
-    err1 = np.linalg.norm(proj1_xy - img1ptsNorm, axis=1)
-    err2 = np.linalg.norm(proj2_xy - img2ptsNorm, axis=1)
-    mask_reproj = (err1 < reproj_thresh) & (err2 < reproj_thresh)
+    err1 = np.linalg.norm(proj1_xy - img1_pts, axis=1)
+    err2 = np.linalg.norm(proj2_xy - img2_pts, axis=1)
+    mask_reproj =  (err2 < reproj_thresh)  & (err1 < reproj_thresh) 
 
     # Parallax angle check (angle between two viewing rays)
     # camera centers:
@@ -181,22 +181,15 @@ def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches,
     angles_deg = np.degrees(np.arccos(cosang))
     mask_angle = angles_deg > parallax_deg_thresh
 
-    # Depth bound (in camera1 frame)
     mask_depth = (pts_cam1[:,2] < max_depth) & (pts_cam2[:,2] < max_depth)
 
-    mask_all =  mask_reproj & mask_front #& mask_angle & mask_finite & mask_depth 
+    mask_all =  mask_reproj  & mask_front  & mask_depth #& mask_angle & mask_finite
 
     # Apply mask
     pts3d_good = pts3d[mask_all]
     img1_good = img1_pts[mask_all]
     img2_good = img2_pts[mask_all]
     valid_matches_good = [valid_matches[i] for i in range(len(valid_matches)) if mask_all[i]]
-    # Prepare ref arrays (map keypoint index -> 3D point index)
-    # print(pts3d_good.shape)
-    # print(img1_good.shape,img2_good.shape)
-    # Append each accepted 3D point to global list and set refs
-
-    # If nothing kept, return empty arrays but keep ref arrays
     if pts3d_good.shape[0] == 0:
         print("NO GOOD 3D point")
         return np.zeros((0,3)),[],[],[]
@@ -342,6 +335,7 @@ def select_next_image(image_data, all_points_3D, unregistered_ids, path, min_cor
     best_score = -1
     best_img_id = None
     best_data = None
+    best_img = None
 
     for img_id in unregistered_ids:
         img = cv2.imread(path + img_id) 
@@ -352,5 +346,78 @@ def select_next_image(image_data, all_points_3D, unregistered_ids, path, min_cor
             best_score = score
             best_img_id = img_id
             best_data = (matched_2D_pts, matched_3D_pts, desc_new, kp_new)
+            best_img = img.copy()
+    if best_img is None:
+        return None,None,None,None,None
+    
+    
+    # img_vis = best_img.copy()
+    # for (x, y) in best_data[0]:  # matched_2D_pts
+    #     img_vis = cv2.circle(img_vis, (int(x), int(y)), 8, (0, 255, 0), -1)
 
+    # plt.figure(figsize=(10, 6))
+    # plt.imshow(cv2.cvtColor(img_vis, cv2.COLOR_BGR2RGB))
+    # plt.title(f"2D–3D Matches on Image {best_img_id} ({best_score} correspondences)")
+    # plt.axis('off')
+    # plt.show()
+    # plt.close('all')
     return best_img_id, best_data[0],best_data[1],best_data[2],best_data[3]
+
+def camera_pose_vis(K, width, height, scale=2, R=np.eye(3), t=np.zeros((3, 1))):
+    """
+    Create a camera pyramid (like COLMAP) as a LineSet in Open3D.
+
+    Parameters:
+        K      : (3x3) intrinsic matrix
+        width  : image width
+        height : image height
+        scale  : scale factor for pyramid size
+        R, t   : SfM extrinsics (world -> camera)
+    """
+    fx, fy = K[0, 0], K[1, 1]
+    cx, cy = K[0, 2], K[1, 2]
+
+    # corners of the image plane in camera coords (normalized & scaled)
+    corners = np.array([
+        [(0 - cx) / fx, (0 - cy) / fy, 1.0],          # top-left
+        [(width - cx) / fx, (0 - cy) / fy, 1.0],      # top-right
+        [(width - cx) / fx, (height - cy) / fy, 1.0], # bottom-right
+        [(0 - cx) / fx, (height - cy) / fy, 1.0],     # bottom-left
+    ])
+    corners *= scale
+
+    # Camera center (origin in cam coords)
+    cam_center = np.zeros((1, 3))
+
+    # Pick 3 corners for triangular base
+    base_corners = corners[[0, 1, 2]]
+
+    # Pyramid vertices in camera coordinates
+    points_cam = np.vstack((cam_center, base_corners))  # shape (4,3)
+
+    # --- Convert SfM extrinsics to world pose ---
+    # SfM: X_c = R * X_w + t
+    # Camera center in world: C = -R.T @ t
+    R_w = R.T
+    t_w = -R.T @ t.reshape(3, 1)
+
+    # Build homogeneous transform (camera->world)
+    Rt = np.hstack((R_w, t_w))
+    Rt = np.vstack((Rt, [0, 0, 0, 1]))
+
+    # Transform pyramid points into world coordinates
+    points_world = (Rt @ np.hstack((points_cam, np.ones((4, 1)))).T).T[:, :3]
+
+    # Edges of pyramid
+    lines = [
+        [0, 1], [0, 2], [0, 3],  # tip to base corners
+        [1, 2], [2, 3], [3, 1]   # base triangle
+    ]
+    colors = [[0, 0, 1] for _ in lines]  # blue pyramid edges
+
+    line_set = o3d.geometry.LineSet()
+    line_set.points = o3d.utility.Vector3dVector(points_world)
+    line_set.lines = o3d.utility.Vector2iVector(lines)
+    line_set.colors = o3d.utility.Vector3dVector(colors)
+
+    return line_set
