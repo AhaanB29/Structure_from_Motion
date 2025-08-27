@@ -170,7 +170,7 @@ def RANSAC_refinement_Graph(graph,path,orb):
 ###############################################################
 def BoW_main():
     path = "/media/ahaanbanerjee/Crucial X9/SfM/Data/templeRing/images/"
-    orb = cv2.ORB_create(nfeatures=10)
+    orb = cv2.ORB_create(nfeatures=1)
     img_id , descprs = feature_extractor(path,orb)
     flattned_desc = descprs.reshape(-1,32)
     bow = BoW(branching_factor=15,max_depth=8)

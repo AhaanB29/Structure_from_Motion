@@ -257,16 +257,15 @@ def SeedPair_PoseEstimation(kp1,desc1,kp2,desc2,K1,K2,R_0,t_0,matches):
     pts1,pts2 = np.array(pts1),np.array(pts2)
     F,mask = cv2.findFundamentalMat(pts1,pts2,cv2.FM_RANSAC,1.0,0.99)
     E = K2.T @ F @ K1
+    configSet = [None,None,None,None]
     _, R, t, pose_mask = cv2.recoverPose(E, pts1, pts2, K1)
-    # configSet = [None,None,None,None]
-    
+    # R1,R2,t = ExtractCameraPoses(E)
     # configSet[0] = (R1,t,Triangulate2Views(pts1[mask],pts2[mask],R_0,t_0,K1,R1,t[:,np.newaxis],K2))
     # configSet[1] = (R1,-t,Triangulate2Views(pts1[mask],pts2[mask],R_0,t_0,K1,R1,-t[:,np.newaxis],K2))
     # configSet[2] = (R2,t,Triangulate2Views(pts1[mask],pts2[mask],R_0,t_0,K1,R2,t[:,np.newaxis],K2))
     # configSet[3] = (R2,-t,Triangulate2Views(pts1[mask],pts2[mask],R_0,t_0,K1,R2,-t[:,np.newaxis],K2))
 
     # R,t,count  = DisambiguateCameraPose(configSet)
-    #print(count)
     return R,t,mask
 
 def ReprojectionError(img1pts, R, t, K, pts3d):
@@ -396,7 +395,8 @@ def select_next_image(image_data, all_points_3D, unregistered_ids, path,Ks,img_i
 
 def camera_pose_vis(K, width, height, scale=2, R=np.eye(3), t=np.zeros((3, 1))):
     """
-    Create a camera pyramid (like COLMAP) as a LineSet in Open3D.
+    Create a square-based camera pyramid (like COLMAP) as a LineSet in Open3D,
+    along with camera coordinate axes.
 
     Parameters:
         K      : (3x3) intrinsic matrix
@@ -420,11 +420,8 @@ def camera_pose_vis(K, width, height, scale=2, R=np.eye(3), t=np.zeros((3, 1))):
     # Camera center (origin in cam coords)
     cam_center = np.zeros((1, 3))
 
-    # Pick 3 corners for triangular base
-    base_corners = corners[[0, 1, 2]]
-
     # Pyramid vertices in camera coordinates
-    points_cam = np.vstack((cam_center, base_corners))  # shape (4,3)
+    points_cam = np.vstack((cam_center, corners))  # shape (5,3) → [0]=center, [1..4]=corners
 
     # --- Convert SfM extrinsics to world pose ---
     # SfM: X_c = R * X_w + t
@@ -437,18 +434,43 @@ def camera_pose_vis(K, width, height, scale=2, R=np.eye(3), t=np.zeros((3, 1))):
     Rt = np.vstack((Rt, [0, 0, 0, 1]))
 
     # Transform pyramid points into world coordinates
-    points_world = (Rt @ np.hstack((points_cam, np.ones((4, 1)))).T).T[:, :3]
+    points_world = (Rt @ np.hstack((points_cam, np.ones((5, 1)))).T).T[:, :3]
 
-    # Edges of pyramid
+    # --- Edges of pyramid (square base) ---
     lines = [
-        [0, 1], [0, 2], [0, 3],  # tip to base corners
-        [1, 2], [2, 3], [3, 1]   # base triangle
+        [0, 1], [0, 2], [0, 3], [0, 4],   # tip to base corners
+        [1, 2], [2, 3], [3, 4], [4, 1]    # base square
     ]
     colors = [[0, 0, 1] for _ in lines]  # blue pyramid edges
 
+    # --- Add camera axes (length = scale) ---
+    axes = np.array([
+        [0, 0, 0],   # origin
+        [scale, 0, 0],  # x
+        [0, scale, 0],  # y
+        [0, 0, scale],  # z
+    ])
+    axes_world = (Rt @ np.hstack((axes, np.ones((4, 1)))).T).T[:, :3]
+
+    axis_lines = [
+        [0, 1],  # x-axis
+        [0, 2],  # y-axis
+        [0, 3],  # z-axis
+    ]
+    axis_colors = [
+        [1, 0, 0],  # red for x
+        [0, 1, 0],  # green for y
+        [0, 0, 1],  # blue for z
+    ]
+
+    # --- Combine pyramid + axes ---
+    all_points = np.vstack((points_world, axes_world))
+    all_lines = lines + [[p[0] + len(points_world), p[1] + len(points_world)] for p in axis_lines]
+    all_colors = colors + axis_colors
+
     line_set = o3d.geometry.LineSet()
-    line_set.points = o3d.utility.Vector3dVector(points_world)
-    line_set.lines = o3d.utility.Vector2iVector(lines)
-    line_set.colors = o3d.utility.Vector3dVector(colors)
+    line_set.points = o3d.utility.Vector3dVector(all_points)
+    line_set.lines = o3d.utility.Vector2iVector(all_lines)
+    line_set.colors = o3d.utility.Vector3dVector(all_colors)
 
     return line_set

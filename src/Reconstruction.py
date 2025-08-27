@@ -17,10 +17,12 @@ def SfM(seed_pair, all_k, img_id, path):
     visited_ids = []
     image_data = {}
     failed_images =[]
+
     R_0 = np.eye(3)
     t_0 = np.zeros((3, 1))
     K1 = all_k[img_id.index(seed_pair[0])]
     K2 = all_k[img_id.index(seed_pair[1])]
+
     img1 = cv2.imread(path+seed_pair[0])
     img2 = cv2.imread(path+seed_pair[1])
     img1,K1,_ = resize(img1,K1)
@@ -34,7 +36,7 @@ def SfM(seed_pair, all_k, img_id, path):
     scale_factor = 7.38
     # pts_3d = pts_3d * scale_factor
     # t = t * 
-    #pts_3d,Rnew,tnew,_= bundle_adjustment(pts_3d,pts1,pts2,K1,K2,R,t)
+    #pts_3d,_,_,_= bundle_adjustment(pts_3d,pts1,pts2,K1,K2,R,t)
     #pts_3d,pts1,pts2,matches= BaseTriangulation(kp1,kp2,mask,K1,K2,R_0,t_0,Rnew,tnew,matches)
     ref1,ref2= [-1]*len(kp1),[-1]*len(kp2)
     clrs = get_colors(seed_pair[0],pts1,path,K1)
@@ -181,8 +183,7 @@ def SfM(seed_pair, all_k, img_id, path):
         cam_data = image_data[best_overlap_id]
         if len(cam_data) == 6:
             ROld, tOld, kOld, Ref_Old, descOld, kpOld = cam_data
-        else:
-            ROld, tOld, kOld, Ref_Old, descOld, kpOld, scale_old = cam_data
+
         
         print(f"Triangulating with {best_overlap_id} ({best_overlap_count} potential matches)")
         
@@ -210,7 +211,7 @@ def SfM(seed_pair, all_k, img_id, path):
         # Pruning the matches using fundamental matrix
         print('[Info]: Pruning the Matches..')
         try:
-            F, mask = cv2.findFundamentalMat(imgOldPts, imgNewPts, cv2.FM_RANSAC, 2.0, 0.99)
+            F, mask = cv2.findFundamentalMat(imgOldPts, imgNewPts, cv2.FM_RANSAC, 1.0, 0.99)
         except cv2.error as e:
             print(f"Fundamental matrix computation failed: {e}")
             ref = [-1] * len(kp_new)
@@ -223,11 +224,10 @@ def SfM(seed_pair, all_k, img_id, path):
             image_data[best_img_id] = (Rnew, tnew, K_new, ref, desc_new, kp_new)
             continue
         
-        # Robust triangulation
         print('[Info]: Triangulating..')
         newPts, imgOldPts, imgNewPts, valid_matches = BaseTriangulation(
             kpOld, kp_new, mask, kOld, K_new, ROld, tOld, Rnew, tnew, matches)
-        
+        #newPts,_,_,_= bundle_adjustment(newPts,imgOldPts,imgNewPts,kOld,K_new,Rnew,tnew)
         if len(newPts) == 0:
             print("Triangulation yielded no valid 3D points")
             ref = [-1] * len(kp_new)
@@ -235,14 +235,14 @@ def SfM(seed_pair, all_k, img_id, path):
             continue
         
         try:
-            error = ReprojectionError(imgNewPts, Rnew, tnew, K_new, newPts)
-            print(f"Reprojection Error: {error:.3f}")
+            error= ReprojectionError(imgNewPts, Rnew, tnew, K_new, newPts)
+            print(f"Reprojection Error pre BA: {error:.3f}")
             all_errors.append(error)
         except Exception as e:
             print(f"Error calculation failed: {e}")
 
         clrs = get_colors(best_img_id, imgNewPts, path, K_new)
-        
+        print(np.array(newPts).shape)
         for match, X, C in zip(valid_matches, newPts, clrs):
             p_idx = len(all_points_3D)
             all_points_3D.append([X[0], X[1], X[2], C[2], C[1], C[0]])
@@ -251,74 +251,106 @@ def SfM(seed_pair, all_k, img_id, path):
 
         
         image_data[best_img_id] = (Rnew, tnew, K_new, ref, desc_new, kp_new)
+        ##################################------BA---------######################################
+        optimized_points, image_data,ba_success = run_incremental_ba_every_n_images(
+            image_data, all_points_3D, visited_ids, ba_interval=2, verbose=True
+        )
         
+        if ba_success:
+            # Update our reconstruction with BA results
+            all_points_3D = optimized_points
+            
+            # Recalculate reprojection errors after BA
+            try:
+                ba_errors = compute_ba_reprojection_errors(image_data, all_points_3D, visited_ids)
+                current_error = ba_errors.get(best_img_id, error)
+                print(f"Reprojection Error after BA: {current_error:.3f}")
+                all_errors[-1] = current_error  # Update last error
+                
+                # Print mean error for all cameras
+                if ba_errors:
+                    mean_ba_error = np.mean(list(ba_errors.values()))
+                    print(f"Mean reprojection error after BA: {mean_ba_error:.3f}")
+                    
+            except Exception as e:
+                print(f"Error calculation after BA failed: {e}")
+        
+        # Add camera pyramid for visualization
         try:
             pyramids.append(camera_pose_vis(K_new, 800, 600, scale=0.2, R=Rnew, t=tnew))
         except:
             pass
-        
+        ##########################################################################
         # Intermediate visualization
-        temp = np.vstack(all_points_3D, dtype=np.float64)
-        pcd.points = o3d.utility.Vector3dVector(temp[:, :3])
-        pcd.colors = o3d.utility.Vector3dVector(temp[:, 3:])
-        
-        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
-        pcd.orient_normals_towards_camera_location(np.array([0, 0, 0]))
-        
-        vis = o3d.visualization.Visualizer()
-        vis.create_window(window_name="3D Intermediate", width=800, height=600, left=50, top=50)
-        vis.add_geometry(pcd)
-        for pyr in pyramids:
-            vis.add_geometry(pyr)
-        vis.run()
-        vis.destroy_window()
+        if(len(visited_ids)% 10== 0):
+            temp = np.vstack(all_points_3D, dtype=np.float64)
+            pcd.points = o3d.utility.Vector3dVector(temp[:, :3])
+            pcd.colors = o3d.utility.Vector3dVector(temp[:, 3:])
+            
+            pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+            pcd.orient_normals_towards_camera_location(np.array([0, 0, 0]))
+            
+            vis = o3d.visualization.Visualizer()
+            vis.create_window(window_name="3D Intermediate", width=800, height=600, left=50, top=50)
+            vis.add_geometry(pcd)
+            for pyr in pyramids:
+                vis.add_geometry(pyr)
+            vis.run()
+            vis.destroy_window()
 
     
     # Final statistics
-    print(f"\n=== Reconstruction Summary ===")
+    print("Final Bundle Adjustment in process.........")
+    final_optimized_points, image_data,final_ba_success = run_final_ba(
+        image_data, all_points_3D, visited_ids, verbose=True
+    )
+    
+    if final_ba_success:
+        all_points_3D = final_optimized_points
+
+    print(f"\n=== Reconstruction completed Summary ===")
     print(f"Total images processed: {len(visited_ids)}")
     print(f"Failed images: {len(failed_images)}")
     print(f"Total 3D points: {len(all_points_3D)}")
     print(f"Mean reprojection error: {np.mean(all_errors):.3f}")
     
-    return all_points_3D, all_errors
+    return all_points_3D, all_errors,pyramids
 
 
 
 
 ###########################################################################
 if __name__ == '__main__':
-    csv_path = '/media/ahaanbanerjee/Crucial X9/SfM/src/camera_intrinsics_chair_IMC.csv'
+    csv_path = '/media/ahaanbanerjee/Crucial X9/SfM/src/artefacts/camera_params_church.csv'
     img_path =  "/media/ahaanbanerjee/Crucial X9/SfM/Data/templeRing/images/"
     img_id, descprs, scene_graph,pair,orb = BoW_main()
     #all_R, all_t, all_k = Camera_Params(csv_path,img_id)
-    #K =np.array([ [2759.48 ,0 ,1520.69],[0 ,2764.16 ,1006.81],[0, 0, 1]],dtype=np.float32).reshape(3,3)
-    K =np.array([ [1520.4 ,0 ,302.32],[0 ,1525.9,246.87],[0, 0, 1]],dtype=np.float32).reshape(3,3)
+    #K =np.array([ [2759.48 ,0 ,1520.69],[0 ,2764.16 ,1006.81],[0, 0, 1]],dtype=np.float32).reshape(3,3)  #Founatain
+    K =np.array([ [1520.4 ,0 ,302.32],[0 ,1525.9,246.87],[0, 0, 1]],dtype=np.float32).reshape(3,3)       #Temple
     all_k = [K]*len(img_id)
-    #pair, _,_, _ = select_seed_pair(img_id,img_path,all_k)
+    #pair, _,_ = select_seed_pair(img_id,img_path,all_k)
     #sift = cv2.SIFT_create(nfeatures=8000)
-    #pair = ('0000.jpg', '0001.jpg')
-    #pair = ('DSC_0399.JPG', 'DSC_0400.JPG')
-    pair = ('templeR0021.png','templeR0022.png')
-    all_pts,all_errors = SfM(pair,all_k,img_id,img_path)
+    #pair = ('0000.jpg', '0001.jpg')  #Fountain
+    #pair = ('DSC_0334.JPG', 'DSC_0335.JPG') #Facade ETHZ
+    pair = ('templeR0021.png','templeR0022.png') #Temple
+    #pair = ('00008.png', '00009.png') 
+    all_pts,all_errors,pyramids = SfM(pair,all_k,img_id,img_path)
 
     all_pts = np.vstack(all_pts,dtype=np.float32)
-    #all_clrs = np.vstack(all_clrs,dtype=np.float32)
     print(all_pts.shape)
     # #############################
-    
+    vis = o3d.visualization.Visualizer()
+    vis.create_window("Structure from Motion", width=800, height=600)
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(all_pts[:,:3])
     pcd.colors = o3d.utility.Vector3dVector(all_pts[:,3:])  
-    # pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
-    # pcd.orient_normals_towards_camera_location(np.array([0, 0, 0]))
+    pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+    pcd.orient_normals_towards_camera_location(np.array([0, 0, 0]))
 
     # Visualize
-    o3d.visualization.draw_geometries(
-        [pcd],  window_name="3D Reconstruction with Color",
-        width=800,
-        height=600,
-        left=50,
-        top=50
-    )
+    vis.add_geometry(pcd)
+    for pyr in pyramids:
+                vis.add_geometry(pyr)
+    vis.run()
+    vis.destroy_window() 
     Toply(all_pts[:,:3],all_pts[:,3:],filename='temple_pcd.ply')
