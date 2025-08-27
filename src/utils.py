@@ -110,7 +110,7 @@ def GetImageMatches(img1,img2):
 
 
 def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches,
-                      parallax_deg_thresh=3.0, reproj_thresh=4.0, max_depth=10.0):
+                      parallax_deg_thresh=1.0, reproj_thresh=4.0, max_depth=25.0):
     """
     Triangulate matches between two images and return new 3D points and reference arrays.
     
@@ -211,7 +211,7 @@ def BaseTriangulation(kp1, kp2, mask, K1, K2, R1, t1, R2, t2, matches,
     mask_distance = (dist_from_cam1 > 0.1 * baseline) & (dist_from_cam2 > 0.1 * baseline)
 
     # Combine all masks
-    mask_all = mask_finite& mask_reproj & mask_depth & mask_front#& mask_distance #& mask_angle 
+    mask_all = mask_finite& mask_reproj & mask_depth & mask_front & mask_angle#& mask_distance & mask_angle 
 
     # Apply final mask
     pts3d_good = pts3d[mask_all]

@@ -253,7 +253,7 @@ def SfM(seed_pair, all_k, img_id, path):
         image_data[best_img_id] = (Rnew, tnew, K_new, ref, desc_new, kp_new)
         ##################################------BA---------######################################
         optimized_points, image_data,ba_success = run_incremental_ba_every_n_images(
-            image_data, all_points_3D, visited_ids, ba_interval=2, verbose=True
+            image_data, all_points_3D, visited_ids, ba_interval=5, verbose=True
         )
         
         if ba_success:
@@ -282,7 +282,7 @@ def SfM(seed_pair, all_k, img_id, path):
             pass
         ##########################################################################
         # Intermediate visualization
-        if(len(visited_ids)% 10== 0):
+        if(len(visited_ids)% 6== 0):
             temp = np.vstack(all_points_3D, dtype=np.float64)
             pcd.points = o3d.utility.Vector3dVector(temp[:, :3])
             pcd.colors = o3d.utility.Vector3dVector(temp[:, 3:])
@@ -321,18 +321,18 @@ def SfM(seed_pair, all_k, img_id, path):
 
 ###########################################################################
 if __name__ == '__main__':
-    csv_path = '/media/ahaanbanerjee/Crucial X9/SfM/src/artefacts/camera_params_church.csv'
-    img_path =  "/media/ahaanbanerjee/Crucial X9/SfM/Data/templeRing/images/"
+    csv_path = '/media/ahaanbanerjee/Crucial X9/SfM/src/artefacts/camera_intrinsics_facade_ETHZ.csv'
+    img_path =  "/media/ahaanbanerjee/Crucial X9/SfM/Data/facade/images/dslr_images/"
     img_id, descprs, scene_graph,pair,orb = BoW_main()
-    #all_R, all_t, all_k = Camera_Params(csv_path,img_id)
+    all_R, all_t, all_k = Camera_Params(csv_path,img_id)
     #K =np.array([ [2759.48 ,0 ,1520.69],[0 ,2764.16 ,1006.81],[0, 0, 1]],dtype=np.float32).reshape(3,3)  #Founatain
-    K =np.array([ [1520.4 ,0 ,302.32],[0 ,1525.9,246.87],[0, 0, 1]],dtype=np.float32).reshape(3,3)       #Temple
-    all_k = [K]*len(img_id)
+    #K =np.array([ [1520.4 ,0 ,302.32],[0 ,1525.9,246.87],[0, 0, 1]],dtype=np.float32).reshape(3,3)       #Temple
+    #all_k = [K]*len(img_id)
     #pair, _,_ = select_seed_pair(img_id,img_path,all_k)
     #sift = cv2.SIFT_create(nfeatures=8000)
     #pair = ('0000.jpg', '0001.jpg')  #Fountain
-    #pair = ('DSC_0334.JPG', 'DSC_0335.JPG') #Facade ETHZ
-    pair = ('templeR0021.png','templeR0022.png') #Temple
+    pair = ('DSC_0334.JPG', 'DSC_0335.JPG') #Facade ETHZ
+    #pair = ('templeR0021.png','templeR0022.png') #Temple
     #pair = ('00008.png', '00009.png') 
     all_pts,all_errors,pyramids = SfM(pair,all_k,img_id,img_path)
 

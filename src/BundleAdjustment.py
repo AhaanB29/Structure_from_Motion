@@ -126,34 +126,28 @@ def global_bundle_adjustment(cameras, points_3d, observations, visited_ids,
         
         # Compute residuals for each observation
         residuals_list = []
-        
         for obs in observations:
             cam_id = obs['camera_id']
             point_idx = obs['point_idx']
             observed_pixel = obs['pixel']
             
-            if cam_id not in cam_params or point_idx >= len(points_3d):
-                residuals_list.extend([50.0, 50.0])  # Reduced penalty for invalid obs
-                continue
-            
-            # Get camera parameters
+            # Get camera and point parameters
             rvec, tvec = cam_params[cam_id]
             K = cameras[cam_id]['K']
-            
-            # Get 3D point
             point_3d = point_coords[point_idx].reshape(1, 3)
             
             # Project to image
+            # A try-except block is still good practice for rare numerical errors
             try:
                 projected_pixels, _ = cv2.projectPoints(point_3d, rvec, tvec, K, None)
                 projected_pixel = projected_pixels[0, 0]
                 
-                # Compute residual
                 residual = projected_pixel - observed_pixel
                 residuals_list.extend(residual)
-            except:
-                # If projection fails, add moderate residual
-                residuals_list.extend([10.0, 10.0])
+            except cv2.error:
+                # If projection fails even with clean data, it points to a severe
+                # numerical issue. Adding a large, but not infinite, residual can help.
+                residuals_list.extend([1e6, 1e6])
         
         return np.array(residuals_list, dtype=np.float64)
     

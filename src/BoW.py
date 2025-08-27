@@ -169,7 +169,7 @@ def RANSAC_refinement_Graph(graph,path,orb):
     return verified_graph,seed_pair,max_inlier
 ###############################################################
 def BoW_main():
-    path = "/media/ahaanbanerjee/Crucial X9/SfM/Data/templeRing/images/"
+    path = "/media/ahaanbanerjee/Crucial X9/SfM/Data/facade/images/dslr_images/"
     orb = cv2.ORB_create(nfeatures=1)
     img_id , descprs = feature_extractor(path,orb)
     flattned_desc = descprs.reshape(-1,32)
