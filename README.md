@@ -42,7 +42,7 @@ The pipeline follows these sequential steps to build the 3D model:
 
 ### Temple Ring Dataset
 <!-- Placeholder: Insert an image of your mid-reconstruction point cloud and cameras here -->
-![Intermediate Reconstruction](/media/ahaanbanerjee/Crucial X9/SfM/results/templeResults/ScreenCapture_2025-08-28-02-16-46.png)
+![Intermediate Reconstruction](/results/templeResults/ScreenCapture_2025-08-28-02-16-46.png)
 
 
 ## How to Run
