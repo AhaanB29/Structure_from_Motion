@@ -33,12 +33,12 @@ The pipeline follows these sequential steps to build the 3D model:
 
 ### ETHZ 3D - Facade Dataset
 <!-- Placeholder: Insert an image of your initial 2-view reconstruction here -->
-![Initial Reconstruction](/media/ahaanbanerjee/Crucial X9/SfM/results/Facade_results/ScreenCapture_2025-08-28-02-51-32.png)
+![Initial Reconstruction](/results/Facade_results/ScreenCapture_2025-08-28-02-51-32.png)
 
 
 ### Fountain Dataset
 <!-- Placeholder: Insert an image of your mid-reconstruction point cloud and cameras here -->
-![Intermediate Reconstruction](/media/ahaanbanerjee/Crucial X9/SfM/results/Fountain_Results/ScreenCapture_2025-08-22-00-14-12.png)
+![Intermediate Reconstruction](/results/Fountain_Results/ScreenCapture_2025-08-22-00-14-12.png)
 
 ### Temple Ring Dataset
 <!-- Placeholder: Insert an image of your mid-reconstruction point cloud and cameras here -->
