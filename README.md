@@ -7,14 +7,6 @@ The pipeline also has implementation of  global **Bundle Adjustment (BA)** proce
 <!-- ![Final Reconstruction GIF](https://raw.githubusercontent.com/AhaanBanerjee/Visual-Odometry-and-SLAM-Implementations/master/artefacts/SfM.gif)
 *(Example output from the Temple dataset)* -->
 
-## Features
-- **Incremental Reconstruction**: Starts with a two-view reconstruction and incrementally adds new views.
-- **Feature Matching**: Uses SIFT for feature detection and a Brute-Force matcher.
-- **Robust Pose Estimation**: Employs RANSAC with the 5-point/8-point algorithm for robust camera pose estimation (PnP).
-- **Triangulation with Filtering**: Implements robust triangulation with multiple checks (cheirality, parallax, reprojection error) to ensure high-quality 3D points.
-- **Global Bundle Adjustment**: A custom `scipy.optimize.least_squares`-based implementation refines all camera poses and 3D points simultaneously.
-- **Visualization**: Real-time 3D visualization of the point cloud and camera poses (as pyramids) using Open3D.
-
 ## The SfM Workflow
 
 The pipeline follows these sequential steps to build the 3D model:
