@@ -2,7 +2,7 @@
 
 This project is a Python implementation of an incremental Structure from Motion (SfM) pipeline. It reconstructs a 3D scene and camera poses from a sequence of 2D images having varying camera intrinsics. The entire pipeline is built from scratch using **OpenCV**, **NumPy**, and **SciPy**, with **Open3D** for visualization.
 
-The core of the pipeline is a custom implementation of a global **Bundle Adjustment (BA)** procedure that jointly optimizes 3D point clouds and camera parameters for improved accuracy.
+The pipeline also has implementation of  global **Bundle Adjustment (BA)** procedure that jointly optimizes 3D point clouds and camera parameters for improved accuracy.
 
 <!-- ![Final Reconstruction GIF](https://raw.githubusercontent.com/AhaanBanerjee/Visual-Odometry-and-SLAM-Implementations/master/artefacts/SfM.gif)
 *(Example output from the Temple dataset)* -->
@@ -41,23 +41,23 @@ The pipeline follows these sequential steps to build the 3D model:
 
 ### ETHZ 3D - Facade Dataset
 <!-- Placeholder: Insert an image of your initial 2-view reconstruction here -->
-![Initial Reconstruction](path/to/your/initial_reconstruction.jpg)
+![Initial Reconstruction](/media/ahaanbanerjee/Crucial X9/SfM/results/Facade_results/ScreenCapture_2025-08-28-02-51-32.png)
 
 
-### FOUNTAIN
+### Fountain Dataset
 <!-- Placeholder: Insert an image of your mid-reconstruction point cloud and cameras here -->
-![Intermediate Reconstruction](path/to/your/intermediate_reconstruction.jpg)
+![Intermediate Reconstruction](/media/ahaanbanerjee/Crucial X9/SfM/results/Fountain_Results/ScreenCapture_2025-08-22-00-14-12.png)
 
 ### Temple Ring Dataset
 <!-- Placeholder: Insert an image of your mid-reconstruction point cloud and cameras here -->
-![Intermediate Reconstruction](path/to/your/intermediate_reconstruction.jpg)
+![Intermediate Reconstruction](/media/ahaanbanerjee/Crucial X9/SfM/results/templeResults/ScreenCapture_2025-08-28-02-16-46.png)
 
 
 ## How to Run
 
 1.  **Clone the repository:**
     ```
-    git clone https://github.com/your-username/your-repo-name.git
+    git clone https://github.com/AhaanB29/Structure_from_Motion/tree/main
     cd your-repo-name
     ```
 
