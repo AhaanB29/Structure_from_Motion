@@ -1,4 +1,4 @@
-# Incremental Structure from Motion (SfM) in Python
+# Incremental Structure from Motion (SfM)
 
 This project is a Python implementation of an incremental Structure from Motion (SfM) pipeline. It reconstructs a 3D scene and camera poses from a sequence of 2D images having varying camera intrinsics. The entire pipeline is built from scratch using **OpenCV**, **NumPy**, and **SciPy**, with **Open3D** for visualization.
 
