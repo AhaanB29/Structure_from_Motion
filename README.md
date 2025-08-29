@@ -33,7 +33,7 @@ The pipeline follows these sequential steps to build the 3D model:
 
 <!-- ### ETHZ 3D - Facade Dataset
 <!-- Placeholder: Insert an image of your initial 2-view reconstruction here -->
-![Initial Reconstruction](/results/Facade_results/ScreenCapture_2025-08-28-02-51-32.png) -->
+<!-- ![Initial Reconstruction](/results/Facade_results/ScreenCapture_2025-08-28-02-51-32.png) --> -->
 
 
 ### Fountain Dataset
@@ -44,7 +44,7 @@ Total 3D points- 16908, Mean Reprojection Error - 0.409
 ### Temple Ring Dataset
 Total 3D points- 20467, Mean Reprojection Error - 0.356
 <!-- Placeholder: Insert an image of your mid-reconstruction point cloud and cameras here -->
-![Intermediate Reconstruction ](/artefacts/temple.mp4.gif)
+![Intermediate Reconstruction GIF](/artefacts/temple.mp4.gif)
 
 
 ## How to Run
