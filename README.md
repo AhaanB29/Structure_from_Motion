@@ -39,12 +39,12 @@ The pipeline follows these sequential steps to build the 3D model:
 ### Fountain Dataset
 Total 3D points- 16908, Mean Reprojection Error - 0.409
 <!-- Placeholder: Insert an image of your mid-reconstruction point cloud and cameras here -->
-![Intermediate Reconstruction GIF](/artefacts/fountain2_up.gif)
+![Intermediate Reconstruction GIF](/src/artefacts/fountain2_up.gif)
 
 ### Temple Ring Dataset
 Total 3D points- 20467, Mean Reprojection Error - 0.356
 <!-- Placeholder: Insert an image of your mid-reconstruction point cloud and cameras here -->
-![Intermediate Reconstruction GIF](/artefacts/temple.mp4.gif)
+![Intermediate Reconstruction GIF](/src/artefacts/temple.mp4.gif)
 
 
 ## How to Run
