@@ -205,10 +205,8 @@ def global_bundle_adjustment(cameras, points_3d, observations, visited_ids,
                 print("[BA] All cameras anchored, no optimization needed")
             return cameras, points_3d, True
         
-        # Jacobian sparsity pattern
         jac_sparsity = create_jacobian_sparsity()
         
-        # Optimize
         result = least_squares(
             residuals, x0,
             jac_sparsity=jac_sparsity,
@@ -256,7 +254,7 @@ def prepare_observations_from_image_data(image_data, visited_ids, all_points_3D)
         if len(cam_data) < 6:
             continue
             
-        R, t, K, ref_array, desc, kp = cam_data[:6]
+        R, t, K, ref_array, desc, kp = cam_data
         
         # Add observations for this camera with validation
         for kp_idx, point_idx in enumerate(ref_array):
@@ -308,7 +306,7 @@ def update_image_data_from_ba_results(image_data, optimized_cameras):
     return image_data
 
 
-def run_incremental_ba_every_n_images(image_data, all_points_3D, visited_ids, 
+def inter_ba(image_data, all_points_3D, visited_ids, 
                                      ba_interval=10, verbose=True):
     """Run BA every N images with gauge anchoring"""
     
@@ -321,7 +319,6 @@ def run_incremental_ba_every_n_images(image_data, all_points_3D, visited_ids,
         print(f"RUNNING BUNDLE ADJUSTMENT - {len(visited_ids)} images processed")
         print(f"{'='*50}")
     
-    # Prepare data for BA
     cameras = prepare_cameras_from_image_data(image_data, visited_ids)
     observations = prepare_observations_from_image_data(image_data, visited_ids, all_points_3D)
     
@@ -329,8 +326,7 @@ def run_incremental_ba_every_n_images(image_data, all_points_3D, visited_ids,
         if verbose:
             print(f"[BA] Insufficient data for BA")
         return all_points_3D, image_data, False
-    
-    # Run bundle adjustment with anchoring
+
     optimized_cameras, optimized_points, success = global_bundle_adjustment(
         cameras, all_points_3D, observations, visited_ids,
         robust_loss='huber',
@@ -354,7 +350,7 @@ def run_incremental_ba_every_n_images(image_data, all_points_3D, visited_ids,
         return all_points_3D, image_data, False
 
 
-def run_final_ba(image_data, all_points_3D, visited_ids, verbose=True):
+def final_ba(image_data, all_points_3D, visited_ids, verbose=True):
     """Run final comprehensive bundle adjustment"""
     if verbose:
         print(f"\n{'='*60}")
